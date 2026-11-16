@@ -1,0 +1,41 @@
+{
+  "id": "hanakasu-mantri-pwa",
+  "name": "Hanakasu Mantri — Personal Reserve",
+  "short_name": "Hanakasu Mantri",
+  "description": "Private personal finance, wealth reserve, and automated ledger.",
+  "start_url": "/",
+  "shortcuts": [
+    {
+      "name": "New transaction",
+      "short_name": "Add transaction",
+      "description": "Open the transaction form to log a new entry.",
+      "url": "/?action=new-transaction",
+      "icons": [
+        {
+          "src": "/hm-icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ],
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/hm-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/hm-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

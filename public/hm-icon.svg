@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#000000" />
+  <rect x="28" y="28" width="456" height="456" rx="92" fill="#1F150C" stroke="#412D15" stroke-width="16" />
+  <rect x="56" y="56" width="400" height="400" rx="72" fill="none" stroke="#E1DCC9" stroke-width="4" stroke-opacity="0.25" />
+  <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="#E1DCC9" font-family="&#39;Plus Jakarta Sans&#39;, system-ui, -apple-system, sans-serif" font-weight="900" font-size="200" letter-spacing="-8">HM</text>
+</svg>

@@ -1,0 +1,192 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family:
+      "Plus Jakarta Sans",
+      -apple-system,
+      BlinkMacSystemFont,
+      sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  .font-mono-num {
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+/* STRICT OPPOSITE CONTRAST THEME SYSTEM */
+.theme-dark {
+  --bg-canvas: #000000;
+  --bg-surface: #1f150c;
+  --bg-elevated: #2b1d11;
+  --bg-input: #0b0704;
+  --border-color: #412d15;
+  --border-focus: #e1dcc9;
+  --text-primary: #e1dcc9;
+  --text-secondary: #b5ac96;
+  --btn-bg: #e1dcc9;
+  --btn-text: #000000;
+  color-scheme: dark;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+}
+
+.theme-light {
+  --bg-canvas: #e1dcc9;
+  --bg-surface: #f5f2e8;
+  --bg-elevated: #ebe5d5;
+  --bg-input: #ffffff;
+  --border-color: #bdaf95;
+  --border-focus: #000000;
+  --text-primary: #000000;
+  --text-secondary: #412d15;
+  --btn-bg: #000000;
+  --btn-text: #e1dcc9;
+  color-scheme: light;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+}
+
+.hm-surface {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+.hm-elevated {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+/* BESPOKE LUXURY INPUTS, NUMBER FIELDS, SELECTS & DATE PICKERS (Point 3) */
+.hm-input,
+input[type="text"].hm-input,
+input[type="number"].hm-input,
+input[type="email"].hm-input,
+input[type="password"].hm-input,
+input[type="date"].hm-input,
+input[type="month"].hm-input,
+select.hm-input {
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  border: 1.5px solid var(--border-color);
+  border-radius: 0.85rem;
+  padding: 0.625rem 0.9rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.22);
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.theme-light .hm-input {
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.hm-input:hover {
+  border-color: var(--text-secondary);
+}
+
+.hm-input:focus {
+  border-color: var(--border-focus);
+  box-shadow:
+    0 0 0 3px rgba(225, 220, 201, 0.14),
+    inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  transform: translateY(-0.5px);
+}
+
+.theme-light .hm-input:focus {
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.1);
+}
+
+.hm-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.55;
+  font-weight: 500;
+}
+
+/* Custom Date & Month Picker Styling */
+input[type="date"],
+input[type="month"] {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  position: relative;
+  cursor: pointer;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  opacity: 0.75;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.theme-dark input[type="date"]::-webkit-calendar-picker-indicator,
+.theme-dark input[type="month"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.9) sepia(0.2) saturate(0.5) hue-rotate(5deg);
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="month"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  background-color: rgba(225, 220, 201, 0.12);
+}
+
+/* Custom Select Dropdown Chevron */
+select.hm-input {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23B5AC96' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2.2rem;
+  cursor: pointer;
+}
+
+.hm-btn-primary {
+  background-color: var(--btn-bg);
+  color: var(--btn-text);
+}
+
+.hm-btn-primary:hover {
+  opacity: 0.92;
+}
+
+.hm-border {
+  border-color: var(--border-color);
+}
+
+.hm-text-muted {
+  color: var(--text-secondary);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Native PWA Mobile Gesture Bar Safe Area */
+nav.fixed.bottom-0 {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
