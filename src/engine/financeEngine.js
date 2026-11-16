@@ -284,6 +284,7 @@ export async function triggerWorkableAlert({
   codeHighlight = "",
 }) {
   const targetEmail = profile?.email?.trim();
+  let emailDelivered = false;
 
   // 1. SEND EMAIL FIRST (Never blocked by Browser Notification permissions)
   if (targetEmail) {
@@ -324,13 +325,17 @@ export async function triggerWorkableAlert({
     });
 
     try {
-      await fetch("/api/webhook", {
+      const response = await fetch("/api/webhook", {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: payloadStr,
       });
-    } catch {
-      // Email delivery is best-effort; browser notifications continue below.
+      if (!response.ok) {
+        throw new Error(`Email webhook returned HTTP ${response.status}`);
+      }
+      emailDelivered = true;
+    } catch (error) {
+      console.error("Email delivery failed:", error);
     }
   }
 
@@ -357,6 +362,8 @@ export async function triggerWorkableAlert({
   } catch {
     // Ignore notification constructor restrictions on mobile browsers
   }
+
+  return emailDelivered;
 }
 
 /**

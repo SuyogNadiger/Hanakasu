@@ -51,14 +51,13 @@ export default function ProfileModal({
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draftProfile.email || '');
 
   // 1. Send OTP to Verify Email Address
-  const handleSendEmailOtp = () => {
+  const handleSendEmailOtp = async () => {
     if (!isEmailValid) {
       triggerFloater('error', 'Enter a valid email address first.');
       return;
     }
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    setGeneratedEmailOtp(code);
-    triggerWorkableAlert({
+    const delivered = await triggerWorkableAlert({
       subject: 'Hanakasu Mantri — Email Verification Code',
       message: `Use the verification code below to confirm your alert email address in Hanakasu Mantri.`,
       profile: draftProfile,
@@ -66,6 +65,11 @@ export default function ProfileModal({
       badge: 'IDENTITY VERIFICATION',
       codeHighlight: code
     });
+    if (!delivered) {
+      triggerFloater('error', 'Email could not be sent. Check the deployment webhook configuration and retry.');
+      return;
+    }
+    setGeneratedEmailOtp(code);
     triggerFloater('info', `Verification OTP sent to ${draftProfile.email}.`);
   };
 
@@ -88,7 +92,7 @@ export default function ProfileModal({
   };
 
   // 2. Send OTP to Authorize PIN Change
-  const handleSendPinChangeOtp = () => {
+  const handleSendPinChangeOtp = async () => {
     if (!isEmailValid || !draftProfile.emailVerified) {
       triggerFloater('error', 'Verify your Email address first to receive the PIN authorization OTP.');
       return;
@@ -98,8 +102,7 @@ export default function ProfileModal({
       return;
     }
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    setGeneratedPinOtp(code);
-    triggerWorkableAlert({
+    const delivered = await triggerWorkableAlert({
       subject: 'Hanakasu Mantri — PIN Change Authorization Code',
       message: `Enter the security code below to authorize updating your 4-digit PIN in Hanakasu Mantri.`,
       profile: draftProfile,
@@ -107,6 +110,11 @@ export default function ProfileModal({
       badge: 'SECURITY PIN AUTHORIZATION',
       codeHighlight: code
     });
+    if (!delivered) {
+      triggerFloater('error', 'Email could not be sent. Check the deployment webhook configuration and retry.');
+      return;
+    }
+    setGeneratedPinOtp(code);
     triggerFloater('info', `PIN authorization OTP sent to ${draftProfile.email}.`);
   };
 
@@ -143,14 +151,13 @@ export default function ProfileModal({
     setResetDialogOpen(true);
   };
 
-  const handleSendResetOtp = () => {
+  const handleSendResetOtp = async () => {
     if (!data.profile?.email || !data.profile?.emailVerified) {
       triggerFloater('error', 'Verify an email address or set an app PIN before zeroing out data.');
       return;
     }
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    setResetOtp(code);
-    triggerWorkableAlert({
+    const delivered = await triggerWorkableAlert({
       subject: 'Hanakasu Mantri — Data Reset Authorization Code',
       message: 'Enter this one-time code in the app to authorize permanently deleting all saved finance data.',
       profile: data.profile,
@@ -158,6 +165,11 @@ export default function ProfileModal({
       badge: 'DATA RESET AUTHORIZATION',
       codeHighlight: code
     });
+    if (!delivered) {
+      triggerFloater('error', 'Email could not be sent. Check the deployment webhook configuration and retry.');
+      return;
+    }
+    setResetOtp(code);
     triggerFloater('info', `Reset authorization OTP sent to ${data.profile.email}.`);
   };
 
