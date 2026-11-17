@@ -11,10 +11,12 @@ export default function OverviewView({
   data,
   hideBalances,
   onToggleBankInTotal,
+  onToggleSavedInstrument,
   onUpdateSpendLimit,
   onNavigate
 }) {
   const [showBankPicker, setShowBankPicker] = useState(false);
+  const [showSavedInstrumentPicker, setShowSavedInstrumentPicker] = useState(false);
 
   // Point 6: Total Saved is hidden by default; if no PIN is set, clicking Eye reveals it directly!
   const [isSavedUnlocked, setIsSavedUnlocked] = useState(false);
@@ -29,18 +31,59 @@ export default function OverviewView({
   const {
     bankAccounts,
     selectedBankBalance,
-    sbiBalance,
-    liquidMfBalance,
     pinnedAccounts,
     monthlyIncome,
     monthlyExpense,
     monthlySpendLimit,
     isOverBudgetLimit,
-    monthlySavings,
     cashFlowSeries
   } = finState;
 
   const configuredPin = data?.settings?.pinCode || '';
+  const savedInstrumentOptions = [
+    ...(finState.computedAccounts || [])
+      .filter(account => account.type !== 'credit')
+      .map(account => ({
+        id: `account:${account.id}`,
+        name: account.name,
+        balance: account.currentBalance,
+        group: account.type === 'cash' ? 'Cash' : 'Bank',
+      })),
+    {
+      id: 'liquid-fund',
+      name: 'Liquid fund (available)',
+      balance: finState.liquidMfBalance,
+      group: 'Wealth',
+    },
+    {
+      id: 'emergency-reserve',
+      name: `${data.emergencyReserve?.name || 'Emergency Reserve'} (locked)`,
+      balance: finState.emergencyReserveBalance,
+      group: 'Wealth',
+    },
+    ...(data.investments || []).map(investment => ({
+      id: `investment:${investment.id}`,
+      name: investment.name || 'Investment',
+      balance: Number(investment.currentValue ?? investment.investedAmount) || 0,
+      group: 'Wealth',
+    })),
+    ...(data.goals || []).map(goal => ({
+      id: `goal:${goal.id}`,
+      name: goal.name || 'Savings goal',
+      balance: Number(goal.savedAmount) || 0,
+      group: 'Wealth',
+    })),
+  ];
+  const excludedSavedInstruments = new Set(
+    data.settings?.homeSavingsExcludedInstrumentIds || [],
+  );
+  const selectedSavedInstruments = savedInstrumentOptions.filter(
+    instrument => !excludedSavedInstruments.has(instrument.id),
+  );
+  const totalSaved = selectedSavedInstruments.reduce(
+    (sum, instrument) => sum + (Number(instrument.balance) || 0),
+    0,
+  );
 
   const handleToggleSavedVisibility = () => {
     if (isSavedUnlocked) {
@@ -228,16 +271,26 @@ export default function OverviewView({
               )}
             </div>
 
-            {/* POINT 6: TOTAL SAVED = LIQUID MF + SBI (Reveals directly if no PIN is set) */}
-            <div className="pl-4">
+            {/* Total spendable liquid savings, revealed only after the existing PIN check. */}
+            <div className="pl-4 relative">
               <div className="flex items-center justify-between gap-1">
                 <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted">
                   Total Saved
                 </span>
                 <button
                   type="button"
+                  onClick={() => setShowSavedInstrumentPicker(!showSavedInstrumentPicker)}
+                  title="Choose which instruments are included"
+                  aria-label="Choose instruments included in Total Saved"
+                  className="p-1 rounded-lg border hm-elevated hm-border hm-text-muted hover:opacity-100 cursor-pointer"
+                >
+                  <SlidersHorizontal size={12} />
+                </button>
+                <button
+                  type="button"
                   onClick={handleToggleSavedVisibility}
                   title={isSavedUnlocked ? 'Hide Total Saved' : 'View Total Saved'}
+                  aria-label={isSavedUnlocked ? 'Hide Total Saved' : 'View Total Saved'}
                   className="p-1 rounded-lg border hm-elevated hm-border hm-text-muted hover:opacity-100 cursor-pointer"
                 >
                   {isSavedUnlocked ? <EyeOff size={12} /> : <Eye size={12} />}
@@ -245,14 +298,64 @@ export default function OverviewView({
               </div>
 
               <span className="font-mono-num text-xl sm:text-2xl font-extrabold mt-1 block">
-                {isSavedUnlocked ? formatINR(monthlySavings, false, true) : '₹ •••••'}
+                {isSavedUnlocked ? formatINR(totalSaved, false, true) : '₹ •••••'}
               </span>
 
               <span className="text-[11px] hm-text-muted mt-0.5 block">
                 {isSavedUnlocked
-                  ? `SBI (${formatINR(sbiBalance)}) + Liquid MF (${formatINR(liquidMfBalance)})`
-                  : 'SBI + Liquid MF'}
+                  ? `${selectedSavedInstruments.length} of ${savedInstrumentOptions.length} instruments included`
+                  : 'Selected bank, cash, and wealth instruments'}
               </span>
+
+              {showSavedInstrumentPicker && (
+                <div
+                  role="dialog"
+                  aria-label="Select instruments for Total Saved"
+                  className="absolute right-0 top-full z-40 mt-2 max-h-80 w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border hm-surface hm-border p-3 shadow-2xl"
+                >
+                  <div className="mb-2 flex items-center justify-between border-b hm-border pb-2">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider">
+                      Include in Total Saved
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowSavedInstrumentPicker(false)}
+                      className="text-[11px] font-bold underline hm-text-muted cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {savedInstrumentOptions.map(instrument => {
+                      const checked = !excludedSavedInstruments.has(instrument.id);
+                      return (
+                        <button
+                          key={instrument.id}
+                          type="button"
+                          aria-pressed={checked}
+                          onClick={() => onToggleSavedInstrument(instrument.id)}
+                          className="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-2 text-left hover:opacity-80 cursor-pointer"
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border hm-border ${checked ? 'hm-btn-primary' : ''}`}>
+                              {checked && <Check size={11} strokeWidth={3} />}
+                            </span>
+                            <span className="truncate text-[11px] font-semibold">{instrument.name}</span>
+                          </span>
+                          {isSavedUnlocked && (
+                            <span className="shrink-0 font-mono-num text-[10px] hm-text-muted">
+                              {formatINR(instrument.balance)}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                    {savedInstrumentOptions.length === 0 && (
+                      <p className="p-2 text-[11px] hm-text-muted">Add a bank, investment, or savings goal to start.</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -441,7 +544,7 @@ export default function OverviewView({
 
             <form onSubmit={handleVerifySavedPin} className="space-y-3">
               <p className="hm-text-muted">
-                Enter your 4-digit Profile PIN to view your combined <strong>SBI + Liquid MF</strong> savings:
+                Enter your 4-digit Profile PIN to view your combined <strong>bank, cash, and liquid fund</strong> savings:
               </p>
               <input
                 type="password"

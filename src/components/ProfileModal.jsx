@@ -20,9 +20,6 @@ export default function ProfileModal({
     settings: data.settings
   });
 
-  const [generatedEmailOtp, setGeneratedEmailOtp] = useState(null);
-  const [emailOtpInput, setEmailOtpInput] = useState('');
-
   const [isEditingPin, setIsEditingPin] = useState(false);
   const [newPinDraft, setNewPinDraft] = useState('');
   const [generatedPinOtp, setGeneratedPinOtp] = useState(null);
@@ -48,53 +45,10 @@ export default function ProfileModal({
     setNewPinDraft(data.settings?.pinCode || '');
   }
 
-  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draftProfile.email || '');
-
-  // 1. Send OTP to Verify Email Address
-  const handleSendEmailOtp = async () => {
-    if (!isEmailValid) {
-      triggerFloater('error', 'Enter a valid email address first.');
-      return;
-    }
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    const delivered = await triggerWorkableAlert({
-      subject: 'Hanakasu Mantri — Email Verification Code',
-      message: `Use the verification code below to confirm your alert email address in Hanakasu Mantri.`,
-      profile: draftProfile,
-      theme,
-      badge: 'IDENTITY VERIFICATION',
-      codeHighlight: code
-    });
-    if (!delivered) {
-      triggerFloater('error', 'Email could not be sent. Check the deployment webhook configuration and retry.');
-      return;
-    }
-    setGeneratedEmailOtp(code);
-    triggerFloater('info', `Verification OTP sent to ${draftProfile.email}.`);
-  };
-
-  // POINT 1 FIX: Immediately persist verified email to App state & localStorage so refresh/tab switch never loses it!
-  const handleVerifyEmailOtp = () => {
-    if (emailOtpInput.trim() === generatedEmailOtp) {
-      const updatedProfile = {
-        ...draftProfile,
-        email: draftProfile.email.trim(),
-        emailVerified: true
-      };
-      setDraftProfile(updatedProfile);
-      onSaveProfileAndSettings(updatedProfile, draftSettings);
-      setGeneratedEmailOtp(null);
-      setEmailOtpInput('');
-      triggerFloater('success', 'Email Verified & Permanently Saved ✓');
-    } else {
-      triggerFloater('error', 'Incorrect Email OTP code.');
-    }
-  };
-
   // 2. Send OTP to Authorize PIN Change
   const handleSendPinChangeOtp = async () => {
-    if (!isEmailValid || !draftProfile.emailVerified) {
-      triggerFloater('error', 'Verify your Email address first to receive the PIN authorization OTP.');
+    if (!draftProfile.email || !draftProfile.emailVerified) {
+      triggerFloater('error', 'A verified sign-in email is required to receive the PIN authorization code.');
       return;
     }
     if (newPinDraft && !/^\d{4}$/.test(newPinDraft)) {
@@ -102,7 +56,7 @@ export default function ProfileModal({
       return;
     }
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    const delivered = await triggerWorkableAlert({
+    const delivery = await triggerWorkableAlert({
       subject: 'Hanakasu Mantri — PIN Change Authorization Code',
       message: `Enter the security code below to authorize updating your 4-digit PIN in Hanakasu Mantri.`,
       profile: draftProfile,
@@ -110,12 +64,12 @@ export default function ProfileModal({
       badge: 'SECURITY PIN AUTHORIZATION',
       codeHighlight: code
     });
-    if (!delivered) {
-      triggerFloater('error', 'Email could not be sent. Check the deployment webhook configuration and retry.');
+    if (!delivery.accepted) {
+      triggerFloater('error', delivery.error);
       return;
     }
     setGeneratedPinOtp(code);
-    triggerFloater('info', `PIN authorization OTP sent to ${draftProfile.email}.`);
+    triggerFloater('info', `Email service accepted the request for ${draftProfile.email}. Check your inbox and spam folder.`);
   };
 
   // Immediately persist new PIN upon OTP verification
@@ -137,7 +91,6 @@ export default function ProfileModal({
   const handleDiscard = () => {
     setDraftProfile({ ...(data.profile || {}) });
     setDraftSettings({ ...(data.settings || {}) });
-    setGeneratedEmailOtp(null);
     setGeneratedPinOtp(null);
     setIsEditingPin(false);
     setPinChangeVerified(false);
@@ -157,7 +110,7 @@ export default function ProfileModal({
       return;
     }
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    const delivered = await triggerWorkableAlert({
+    const delivery = await triggerWorkableAlert({
       subject: 'Hanakasu Mantri — Data Reset Authorization Code',
       message: 'Enter this one-time code in the app to authorize permanently deleting all saved finance data.',
       profile: data.profile,
@@ -165,12 +118,12 @@ export default function ProfileModal({
       badge: 'DATA RESET AUTHORIZATION',
       codeHighlight: code
     });
-    if (!delivered) {
-      triggerFloater('error', 'Email could not be sent. Check the deployment webhook configuration and retry.');
+    if (!delivery.accepted) {
+      triggerFloater('error', delivery.error);
       return;
     }
     setResetOtp(code);
-    triggerFloater('info', `Reset authorization OTP sent to ${data.profile.email}.`);
+    triggerFloater('info', `Email service accepted the request for ${data.profile.email}. Check your inbox and spam folder.`);
   };
 
   const handleConfirmReset = () => {
@@ -191,10 +144,6 @@ export default function ProfileModal({
 
   const handleSave = (e) => {
     e.preventDefault();
-    if (draftProfile.email && !draftProfile.emailVerified) {
-      triggerFloater('error', 'Changes NOT saved — Please verify your Email with OTP first.');
-      return;
-    }
     if (isEditingPin && !pinChangeVerified) {
       triggerFloater('error', 'Changes NOT saved — Please verify the PIN change OTP first.');
       return;
@@ -275,7 +224,7 @@ export default function ProfileModal({
           </div>
         </div>
 
-        {/* 2. Verified Email Dispatch Channel (Auto-Persisted) */}
+        {/* 2. The sign-in email is managed by Firebase Authentication */}
         <div className="p-5 rounded-2xl border hm-surface hm-border space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -283,63 +232,27 @@ export default function ProfileModal({
                 <Mail size={15} /> Verified email
               </h2>
               <p className="text-[11px] hm-text-muted mt-0.5">
-                Used for security verification and email alerts when the configured delivery service is available.
+                Used for security codes and email alerts. Change your sign-in email through your account provider, not here.
               </p>
             </div>
             {draftProfile.emailVerified ? (
               <span className="text-emerald-500 font-extrabold flex items-center gap-1">
-                <CheckCircle2 size={14} /> Permanently Verified
+                <CheckCircle2 size={14} /> Firebase verified
               </span>
             ) : (
-              <span className="hm-text-muted text-[11px]">OTP Verification Required</span>
+              <span className="hm-text-muted text-[11px]">Email verification required</span>
             )}
           </div>
 
           <div className="flex gap-2">
             <input
               type="email"
-              placeholder="yourname@gmail.com"
               value={draftProfile.email || ''}
-              onChange={(e) => {
-                const nextEmail = e.target.value;
-                setDraftProfile({
-                  ...draftProfile,
-                  email: nextEmail,
-                  emailVerified: nextEmail.trim() === data.profile?.email && Boolean(data.profile?.emailVerified)
-                });
-              }}
-              className="hm-input flex-1"
+              readOnly
+              aria-label="Firebase sign-in email"
+              className="hm-input flex-1 cursor-not-allowed opacity-75"
             />
-            {!draftProfile.emailVerified && (
-              <button
-                type="button"
-                onClick={handleSendEmailOtp}
-                className="px-4 py-2.5 rounded-xl hm-btn-primary font-extrabold cursor-pointer shrink-0"
-              >
-                Send Email OTP
-              </button>
-            )}
           </div>
-
-          {generatedEmailOtp && !draftProfile.emailVerified && (
-            <div className="flex gap-2 pt-1">
-              <input
-                type="text"
-                maxLength={6}
-                placeholder="Enter 6-digit OTP sent to your email"
-                value={emailOtpInput}
-                onChange={(e) => setEmailOtpInput(e.target.value)}
-                className="hm-input font-mono-num flex-1"
-              />
-              <button
-                type="button"
-                onClick={handleVerifyEmailOtp}
-                className="px-5 py-2 rounded-xl hm-btn-primary font-extrabold cursor-pointer"
-              >
-                Verify & Lock Email
-              </button>
-            </div>
-          )}
         </div>
 
         {/* 3. 4-Digit Security PIN with Mandatory OTP Verification */}

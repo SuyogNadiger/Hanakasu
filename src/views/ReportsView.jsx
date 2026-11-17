@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pencil, Check, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Check, Plus, Trash2, X } from 'lucide-react';
 import { formatINR } from '../engine/financeEngine';
 import { BrandLogo } from '../components/Sidebar';
 
@@ -9,12 +9,23 @@ export default function ReportsView({
   hideBalances,
   onAlterBalance,
   onAlterLiquidMf,
+  onUpdateEmergencyReserve,
+  onWithdrawEmergencyReserve,
   onAddInvestment,
   onUpdateInvestment,
   onDeleteInvestment
 }) {
   const [editingLiquidMf, setEditingLiquidMf] = useState(false);
   const [liquidMfInput, setLiquidMfInput] = useState('');
+  const [reserveSettingsOpen, setReserveSettingsOpen] = useState(false);
+  const [reserveDraft, setReserveDraft] = useState({
+    name: data.emergencyReserve?.name || 'Emergency Reserve',
+    sourceAccountId: data.emergencyReserve?.sourceAccountId || 'liquid_mf',
+    amount: data.emergencyReserve?.amount ?? 0,
+  });
+  const [withdrawalAmount, setWithdrawalAmount] = useState('');
+  const bankAccounts = finState.computedAccounts.filter((account) => account.type === 'bank');
+  const [withdrawalAccountId, setWithdrawalAccountId] = useState(bankAccounts[0]?.id || '');
 
   const [editingInvId, setEditingInvId] = useState(null);
   const [invDraft, setInvDraft] = useState({});
@@ -31,10 +42,17 @@ export default function ReportsView({
     totalLiabilities,
     allSpendableLiquidBalance,
     liquidMfBalance,
+    liquidMfGrossBalance,
+    emergencyReserveBalance,
+    emergencyReserveShortfall,
     totalInvestedCost,
     totalInvestmentValue,
     computedAccounts
   } = finState;
+  const reserveSourceName =
+    reserveDraft.sourceAccountId === 'liquid_mf'
+      ? 'Liquid fund'
+      : computedAccounts.find((account) => account.id === reserveDraft.sourceAccountId)?.name || 'Bank account';
 
   return (
     <div className="space-y-10">
@@ -53,8 +71,8 @@ export default function ReportsView({
             </p>
           </div>
 
-          <div className="lg:col-span-7 grid grid-cols-3 divide-x hm-border">
-            <div className="pr-4">
+          <div className="lg:col-span-7 grid grid-cols-2 gap-y-4 divide-x hm-border sm:grid-cols-4">
+            <div className="pr-3 sm:pr-4">
               <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted block">
                 Banks & Cash
               </span>
@@ -63,16 +81,26 @@ export default function ReportsView({
               </span>
             </div>
 
-            <div className="px-4">
+            <div className="px-3 sm:px-4">
               <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted block">
-                Liquid MF (Savings)
+                Liquid Fund Available
               </span>
               <span className="font-mono-num text-xl font-extrabold mt-1 block">
                 {formatINR(liquidMfBalance, hideBalances, true)}
               </span>
             </div>
 
-            <div className="pl-4">
+            <div className="px-3 sm:px-4">
+              <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted block">
+                Emergency Reserve
+              </span>
+              <span className="font-mono-num text-xl font-extrabold mt-1 block">
+                {formatINR(emergencyReserveBalance, hideBalances, true)}
+              </span>
+              <span className="text-[10px] hm-text-muted">Locked in {reserveSourceName}</span>
+            </div>
+
+            <div className="pl-3 sm:pl-4">
               <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted block">
                 MF & Gold Portfolio Value
               </span>
@@ -84,56 +112,216 @@ export default function ReportsView({
         </div>
       </section>
 
-      {/* 2. UNSPENDABLE LIQUID MF RESERVE ROW */}
-      <section className="rounded-2xl border hm-surface hm-border p-5 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <BrandLogo brand="liquid" size={36} />
-          <div>
+      <section className="flex flex-col gap-4 rounded-2xl border hm-surface hm-border p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <BrandLogo brand="liquid" size={34} />
+          <div className="min-w-0">
             <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted block">
-              Unspendable Emergency Reserve
+              Locked reserve
             </span>
-            <h2 className="text-base font-extrabold">Liquid MF Vault</h2>
+            <h2 className="truncate text-sm font-extrabold">{data.emergencyReserve?.name || 'Emergency Reserve'}</h2>
+            <p className="text-[11px] hm-text-muted">Saved in {reserveSourceName} · excluded from spendable balances</p>
           </div>
         </div>
-
-        {editingLiquidMf ? (
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              step="any"
-              autoFocus
-              value={liquidMfInput}
-              onChange={(e) => setLiquidMfInput(e.target.value)}
-              className="hm-input font-mono-num w-32 rounded-xl px-3 py-1.5 font-extrabold text-sm outline-none"
-            />
-            <button
-              onClick={() => {
-                onAlterLiquidMf(parseFloat(liquidMfInput) || 0, liquidMfBalance);
-                setEditingLiquidMf(false);
-              }}
-              className="p-2 rounded-xl hm-btn-primary cursor-pointer"
-            >
-              <Check size={14} />
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2.5">
-            <span className="font-mono-num text-2xl font-extrabold">
-              {formatINR(liquidMfBalance, hideBalances, true)}
-            </span>
-            <button
-              onClick={() => {
-                setEditingLiquidMf(true);
-                setLiquidMfInput(String(liquidMfBalance));
-              }}
-              title="Edit Liquid MF Balance"
-              className="p-1.5 rounded-lg border hm-elevated hm-border hm-text-muted hover:opacity-100 cursor-pointer"
-            >
-              <Pencil size={13} />
-            </button>
-          </div>
-        )}
+        <div className="flex items-center justify-between gap-4 sm:justify-end">
+          <span className="font-mono-num text-xl font-extrabold">
+            {formatINR(emergencyReserveBalance, hideBalances, true)}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setReserveDraft({
+                name: data.emergencyReserve?.name || 'Emergency Reserve',
+                sourceAccountId: data.emergencyReserve?.sourceAccountId || 'liquid_mf',
+                amount: data.emergencyReserve?.amount ?? 0,
+              });
+              setReserveSettingsOpen(true);
+            }}
+            aria-label="Edit reserve settings and withdrawals"
+            title="Edit reserve settings and withdrawals"
+            className="rounded-lg border hm-elevated hm-border p-2 hm-text-muted cursor-pointer"
+          >
+            <Pencil size={15} />
+          </button>
+        </div>
       </section>
+
+      {reserveSettingsOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Reserve settings"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setReserveSettingsOpen(false);
+          }}
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl space-y-5 overflow-y-auto rounded-2xl border hm-surface hm-border p-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-extrabold uppercase tracking-wider">Reserve settings</h2>
+                <p className="mt-1 text-[11px] hm-text-muted">Edit the lock or withdraw reserve funds to a bank.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReserveSettingsOpen(false)}
+                aria-label="Close reserve settings"
+                className="rounded-lg p-1.5 hm-text-muted cursor-pointer"
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            {emergencyReserveShortfall > 0 && (
+              <p role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
+                The configured reserve exceeds its source balance by {formatINR(emergencyReserveShortfall)}. The unavailable portion is not counted in net worth.
+              </p>
+            )}
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (onUpdateEmergencyReserve(reserveDraft)) {
+                  setReserveDraft({ ...reserveDraft, amount: Number(reserveDraft.amount) });
+                  setReserveSettingsOpen(false);
+                }
+              }}
+              className="grid grid-cols-1 gap-3 border-t hm-border pt-4 sm:grid-cols-2"
+            >
+              <label className="text-[10px] font-bold uppercase hm-text-muted">
+                Reserve name
+                <input
+                  required
+                  value={reserveDraft.name}
+                  onChange={(event) => setReserveDraft({ ...reserveDraft, name: event.target.value })}
+                  className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                />
+              </label>
+              <label className="text-[10px] font-bold uppercase hm-text-muted">
+                Saved in
+                <select
+                  value={reserveDraft.sourceAccountId}
+                  onChange={(event) => setReserveDraft({ ...reserveDraft, sourceAccountId: event.target.value })}
+                  className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                >
+                  <option value="liquid_mf">Liquid fund</option>
+                  {bankAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>{account.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[10px] font-bold uppercase hm-text-muted">
+                Amount to lock
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={reserveDraft.amount}
+                  onChange={(event) => setReserveDraft({ ...reserveDraft, amount: event.target.value })}
+                  className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                />
+              </label>
+              {reserveDraft.sourceAccountId === 'liquid_mf' && (
+                <div className="text-[10px] font-bold uppercase hm-text-muted">
+                  Liquid fund total
+                  {editingLiquidMf ? (
+                    <div className="mt-1 flex gap-1">
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        autoFocus
+                        value={liquidMfInput}
+                        onChange={(event) => setLiquidMfInput(event.target.value)}
+                        className="hm-input min-w-0 flex-1 rounded-lg px-2 py-2 text-xs normal-case"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onAlterLiquidMf(Number(liquidMfInput), liquidMfGrossBalance);
+                          setEditingLiquidMf(false);
+                        }}
+                        className="rounded-lg hm-btn-primary p-2 cursor-pointer"
+                        aria-label="Save liquid fund total"
+                      >
+                        <Check size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingLiquidMf(true);
+                        setLiquidMfInput(String(liquidMfGrossBalance));
+                      }}
+                      className="mt-1 flex w-full items-center justify-between rounded-lg border hm-border px-2.5 py-2 text-xs normal-case"
+                    >
+                      {formatINR(liquidMfGrossBalance, hideBalances, true)} <Pencil size={12} />
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="flex items-end sm:col-span-2">
+                <button type="submit" className="rounded-lg hm-btn-primary px-3 py-2 text-xs font-bold cursor-pointer">
+                  Save reserve settings
+                </button>
+              </div>
+            </form>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (onWithdrawEmergencyReserve(Number(withdrawalAmount), withdrawalAccountId)) {
+                  setWithdrawalAmount('');
+                  setReserveSettingsOpen(false);
+                }
+              }}
+              className="grid grid-cols-1 gap-3 border-t hm-border pt-4 sm:grid-cols-[1fr_1fr_auto]"
+            >
+              <label className="text-[10px] font-bold uppercase hm-text-muted">
+                Withdraw to bank
+                <select
+                  required
+                  value={withdrawalAccountId}
+                  onChange={(event) => setWithdrawalAccountId(event.target.value)}
+                  className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                >
+                  <option value="" disabled>Select destination bank</option>
+                  {bankAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>{account.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[10px] font-bold uppercase hm-text-muted">
+                Withdrawal amount
+                <input
+                  required
+                  type="number"
+                  min="0.01"
+                  max={emergencyReserveBalance}
+                  step="any"
+                  value={withdrawalAmount}
+                  onChange={(event) => setWithdrawalAmount(event.target.value)}
+                  className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={!bankAccounts.length || emergencyReserveBalance <= 0}
+                className="rounded-lg hm-btn-primary px-3 py-2 text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Withdraw reserve
+              </button>
+              {!bankAccounts.length && (
+                <p className="text-xs hm-text-muted sm:col-span-2">
+                  Add a bank account before withdrawing the reserve.
+                </p>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* 3. SIMPLIFIED MUTUAL FUNDS & GOLD PORTFOLIO (Point 12: No Gain/Loss Clutter) */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-10">

@@ -6,6 +6,18 @@
   NODE_VERSION = "22.12.0"
 
 [[redirects]]
+  from = "/api/parse-transaction"
+  to = "/.netlify/functions/parse-transaction"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/financial-advice"
+  to = "/.netlify/functions/financial-advice"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/api/webhook"
   to = "/.netlify/functions/webhook"
   status = 200

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import {
   Eye, EyeOff, Sun, Moon, Bell, Plus, Calendar,
-  ShieldCheck, SlidersHorizontal, UserCheck, X, Cloud, RefreshCw
+  ShieldCheck, SlidersHorizontal, UserCheck, X, Cloud, RefreshCw,
+  AlertCircle, LogOut
 } from 'lucide-react';
 import CalendarDatePicker from './CalendarDatePicker';
 import { getCurrentMonthKey } from '../engine/financeEngine';
@@ -16,7 +17,9 @@ export default function Header({
   profile,
   alertCount,
   syncStatus,
+  syncError,
   onManualCloudSync,
+  onSignOut,
   onOpenQuickAdd,
   onNavigate
 }) {
@@ -61,16 +64,24 @@ export default function Header({
           <button
             type="button"
             onClick={onManualCloudSync}
-            title={`Cloud Sync: ${syncStatus === 'syncing' ? 'Syncing...' : 'Synced across devices (Click to refresh)'}`}
+            title={syncStatus === 'error'
+              ? `Cloud sync failed: ${syncError || 'Click to retry'}`
+              : `Cloud Sync: ${syncStatus === 'syncing' ? 'Syncing...' : 'Synced across devices (Click to refresh)'}`}
             className="p-2 rounded-xl border hm-elevated hm-border flex items-center gap-1.5 text-[11px] font-bold cursor-pointer"
           >
             {syncStatus === 'syncing' ? (
               <RefreshCw size={14} className="animate-spin" />
+            ) : syncStatus === 'error' ? (
+              <AlertCircle size={14} className="text-rose-500" />
             ) : (
               <Cloud size={14} className={syncStatus === 'synced' ? 'text-emerald-500' : 'hm-text-muted'} />
             )}
             <span className="hidden md:inline">
-              {syncStatus === 'syncing' ? 'Syncing' : 'Synced'}
+              {syncStatus === 'syncing'
+                ? 'Syncing'
+                : syncStatus === 'error'
+                  ? 'Sync failed'
+                  : 'Synced'}
             </span>
           </button>
 
@@ -122,6 +133,15 @@ export default function Header({
                 <ShieldCheck size={13} className="text-emerald-500" />
               )}
             </button>
+            <button
+              type="button"
+              onClick={onSignOut}
+              title="Sign out"
+              aria-label="Sign out"
+              className="p-2 rounded-xl border hm-elevated hm-border cursor-pointer"
+            >
+              <LogOut size={15} />
+            </button>
           </div>
 
           <button
@@ -151,7 +171,7 @@ export default function Header({
             />
           </div>
 
-          <div className="grid grid-cols-4 gap-2 pt-1">
+          <div className="grid grid-cols-5 gap-2 pt-1">
             <button
               onClick={() => {
                 onToggleHide();
@@ -194,6 +214,14 @@ export default function Header({
             >
               <UserCheck size={15} />
               <span className="text-[10px]">Profile</span>
+            </button>
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="py-2 rounded-xl border hm-border flex flex-col items-center gap-1 font-semibold"
+            >
+              <LogOut size={15} />
+              <span className="text-[10px]">Sign out</span>
             </button>
           </div>
         </div>

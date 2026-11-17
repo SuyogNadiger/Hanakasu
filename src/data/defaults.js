@@ -94,60 +94,6 @@ export const DEFAULT_CATEGORIES = [
 
 export const DEFAULT_ACCOUNTS = [
   {
-    id: 'acc_union',
-    name: 'Union Bank',
-    nickname: 'Primary UPI',
-    brand: 'union',
-    type: 'bank',
-    openingBalance: 0,
-    pinnedOnHome: true,
-    includeInTotalBank: true
-  },
-  {
-    id: 'acc_sbi',
-    name: 'SBI',
-    nickname: 'Savings Account',
-    brand: 'sbi',
-    type: 'bank',
-    openingBalance: 0,
-    pinnedOnHome: true,
-    includeInTotalBank: true
-  },
-  {
-    id: 'acc_hdfc',
-    name: 'HDFC Bank',
-    nickname: 'Salary Account',
-    brand: 'hdfc',
-    type: 'bank',
-    openingBalance: 0,
-    pinnedOnHome: true,
-    includeInTotalBank: true
-  },
-  {
-    id: 'acc_idfc',
-    name: 'IDFC First Bank',
-    nickname: 'Side Gig Account',
-    brand: 'idfc',
-    type: 'bank',
-    openingBalance: 0,
-    pinnedOnHome: false,
-    includeInTotalBank: true
-  },
-  {
-    id: 'acc_cc_hdfc',
-    name: 'HDFC Moneyback+',
-    nickname: 'Credit Card',
-    brand: 'hdfc_cc',
-    type: 'credit',
-    openingBalance: 0,
-    creditLimit: 50000,
-    alertThresholdPct: 10,
-    billDueDay: 5,
-    billDueDate: '',
-    pinnedOnHome: true,
-    includeInTotalBank: false
-  },
-  {
     id: 'acc_cash',
     name: 'Cash Wallet',
     nickname: 'Physical Cash',
@@ -159,73 +105,64 @@ export const DEFAULT_ACCOUNTS = [
   }
 ];
 
-export const DEFAULT_INVESTMENTS = [
-  {
-    id: 'inv_ppfas',
-    name: 'Parag Parikh Flexi Cap Fund',
-    brand: 'ppfas',
-    type: 'Mutual Fund (SIP)',
-    investedAmount: 0,
-    sipAmount: 0,
-    sipDay: 1,
-    accountId: 'acc_sbi'
-  },
-  {
-    id: 'inv_bandhan',
-    name: 'Bandhan Small Cap Fund',
-    brand: 'bandhan',
-    type: 'Mutual Fund (SIP)',
-    investedAmount: 0,
-    sipAmount: 0,
-    sipDay: 1,
-    accountId: 'acc_sbi'
-  },
-  {
-    id: 'inv_tatagold',
-    name: 'TATA Gold',
-    brand: 'tata',
-    type: 'Gold ETF / Equity',
-    investedAmount: 0,
-    sipAmount: 0,
-    sipDay: null,
-    accountId: 'acc_sbi'
-  }
-];
+export const DEFAULT_INVESTMENTS = [];
+export const DEFAULT_AUTOPAY_RULES = [];
+export const DEFAULT_GOALS = [];
 
-export const DEFAULT_AUTOPAY_RULES = [
-  {
-    id: 'auto_ppfas',
-    title: 'Parag Parikh Flexi Cap SIP',
-    category: 'SIP',
-    amount: 0,
-    frequency: 'Monthly',
-    deductDate: '2026-12-01',
-    deductDay: 1,
-    accountId: 'acc_sbi',
-    linkedInvestmentId: 'inv_ppfas'
-  },
-  {
-    id: 'auto_bandhan',
-    title: 'Bandhan Small Cap SIP',
-    category: 'SIP',
-    amount: 0,
-    frequency: 'Monthly',
-    deductDate: '2026-12-01',
-    deductDay: 1,
-    accountId: 'acc_sbi',
-    linkedInvestmentId: 'inv_bandhan'
-  }
-];
+const LEGACY_PRESET_ACCOUNT_IDS = new Set([
+  'acc_union',
+  'acc_sbi',
+  'acc_hdfc',
+  'acc_idfc',
+  'acc_cc_hdfc'
+]);
+const LEGACY_PRESET_INVESTMENT_IDS = new Set([
+  'inv_ppfas',
+  'inv_bandhan',
+  'inv_tatagold'
+]);
+const LEGACY_PRESET_AUTOPAY_IDS = new Set(['auto_ppfas', 'auto_bandhan']);
+const LEGACY_PRESET_GOAL_IDS = new Set(['goal_emergency']);
 
-export const DEFAULT_GOALS = [
-  {
-    id: 'goal_emergency',
-    name: 'Emergency Reserve Fund',
-    targetAmount: 100000,
-    savedAmount: 0,
-    targetDate: '2027-06-01'
+export function removeLegacyFinancialPresets(data) {
+  const accounts = (data.accounts || []).filter(
+    (account) => !LEGACY_PRESET_ACCOUNT_IDS.has(account.id),
+  );
+  if (!accounts.some((account) => account.id === 'acc_cash')) {
+    accounts.push({ ...DEFAULT_ACCOUNTS[0] });
   }
-];
+
+  return {
+    ...data,
+    accounts,
+    investments: (data.investments || []).filter(
+      (investment) => !LEGACY_PRESET_INVESTMENT_IDS.has(investment.id),
+    ),
+    autopayRules: (data.autopayRules || []).filter(
+      (rule) => !LEGACY_PRESET_AUTOPAY_IDS.has(rule.id),
+    ),
+    goals: (data.goals || []).filter(
+      (goal) => !LEGACY_PRESET_GOAL_IDS.has(goal.id),
+    ),
+  };
+}
+
+export function hasLegacyFinancialPresets(data) {
+  return (
+    (data.accounts || []).some(
+      (account) =>
+        LEGACY_PRESET_ACCOUNT_IDS.has(account.id) ||
+        account.type === 'liquid_mf',
+    ) ||
+    (data.investments || []).some((investment) =>
+      LEGACY_PRESET_INVESTMENT_IDS.has(investment.id),
+    ) ||
+    (data.autopayRules || []).some((rule) =>
+      LEGACY_PRESET_AUTOPAY_IDS.has(rule.id),
+    ) ||
+    (data.goals || []).some((goal) => LEGACY_PRESET_GOAL_IDS.has(goal.id))
+  );
+}
 
 export const INITIAL_APP_DATA = {
   profile: {
@@ -239,9 +176,15 @@ export const INITIAL_APP_DATA = {
     hideBalances: false,
     pinCode: '',
     monthlySpendLimit: 0, // Point 5: Overall Monthly Budget Limit (₹)
-    lastCcReminderMonth: '' // Tracks auto-monthly CC due reminder
+    lastCcReminderMonth: '', // Tracks auto-monthly CC due reminder
+    homeSavingsExcludedInstrumentIds: []
   },
   liquidMfOpeningBalance: 0,
+  emergencyReserve: {
+    name: 'Emergency Reserve',
+    sourceAccountId: 'liquid_mf',
+    amount: 0
+  },
   accounts: DEFAULT_ACCOUNTS,
   categories: DEFAULT_CATEGORIES,
   transactions: [],

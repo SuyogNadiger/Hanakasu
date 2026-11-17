@@ -8,7 +8,7 @@
     {
       "name": "New transaction",
       "short_name": "Add transaction",
-      "description": "Open the transaction form to log a new entry.",
+      "description": "Open a focused transaction form without opening the full app.",
       "url": "/?action=new-transaction",
       "icons": [
         {

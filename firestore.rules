@@ -1,0 +1,20 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function verifiedOwner(userId) {
+      return request.auth != null
+        && request.auth.uid == userId
+        && request.auth.token.email_verified == true;
+    }
+
+    match /users/{userId}/appData/current {
+      allow read: if verifiedOwner(userId);
+      allow create, update: if verifiedOwner(userId)
+        && request.resource.data.keys().hasAll(['lastUpdated', 'profile', 'settings'])
+        && request.resource.data.lastUpdated is number
+        && request.resource.data.profile.email == request.auth.token.email
+        && request.resource.data.profile.emailVerified == true;
+    }
+  }
+}

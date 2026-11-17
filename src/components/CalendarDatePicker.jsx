@@ -96,7 +96,8 @@ export default function CalendarDatePicker({
   placeholder,
   ariaLabel,
   required = false,
-  maxValue
+  maxValue,
+  compact = false
 }) {
   const containerRef = useRef(null);
   const popupRef = useRef(null);
@@ -236,7 +237,7 @@ export default function CalendarDatePicker({
 
   return (
     <div ref={containerRef} className={`relative min-w-0 ${className}`}>
-      <div className={`flex items-center rounded-xl border hm-border hm-input p-0 ${invalid ? 'border-rose-500' : ''}`}>
+      <div className={`flex items-center border hm-border hm-input p-0 ${compact ? 'rounded-lg' : 'rounded-xl'} ${invalid ? 'border-rose-500' : ''}`}>
         <input
           ref={inputRef}
           type="text"
@@ -256,7 +257,7 @@ export default function CalendarDatePicker({
             }
             if (event.key === 'Escape') setOpen(false);
           }}
-          className="min-w-0 w-full bg-transparent px-3 py-2.5 font-mono-num text-xs font-bold outline-none"
+          className={`min-w-0 w-full bg-transparent font-mono-num font-bold outline-none ${compact ? 'px-2 py-1.5 text-[11px]' : 'px-3 py-2.5 text-xs'}`}
         />
         <button
           type="button"
@@ -264,9 +265,9 @@ export default function CalendarDatePicker({
           aria-label={mode === 'month' ? 'Open month picker' : 'Open calendar'}
           aria-haspopup="dialog"
           aria-expanded={open}
-          className="shrink-0 p-2.5 hm-text-muted hover:opacity-100 cursor-pointer"
+          className={`shrink-0 hm-text-muted hover:opacity-100 cursor-pointer ${compact ? 'p-1.5' : 'p-2.5'}`}
         >
-          <CalendarDays size={15} />
+          <CalendarDays size={compact ? 13 : 15} />
         </button>
       </div>
       {invalid && (

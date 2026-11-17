@@ -1,4 +1,6 @@
-import { ACCOUNT_TYPES } from "../data/defaults";
+import { ACCOUNT_TYPES } from "../data/defaults.js";
+import { auth } from "../firebase.js";
+import { matchAccountMention } from "./accountMatching.js";
 
 export const getTodayISO = () => {
   const today = new Date();
@@ -61,17 +63,61 @@ export const formatINR = (
 };
 
 export function evaluateMathExpression(expr) {
-  if (!expr) return 0;
+  if (!expr || !String(expr).trim()) return 0;
   const cleaned = String(expr)
-    .replace(/×/g, "*")
+    .replace(/[×xX]/g, "*")
     .replace(/÷/g, "/")
-    .replace(/[^0-9.+\-*/]/g, "");
-  if (!cleaned) return 0;
+    .replace(/,/g, "")
+    .replace(/\s+/g, "");
+  const tokens = cleaned.match(/(?:\d+(?:\.\d*)?|\.\d+|[()+\-*/])/g);
+  if (!tokens || tokens.join("") !== cleaned) return 0;
+
+  let position = 0;
+  const parseExpression = () => {
+    let value = parseTerm();
+    while (tokens[position] === "+" || tokens[position] === "-") {
+      const operator = tokens[position++];
+      const right = parseTerm();
+      value = operator === "+" ? value + right : value - right;
+    }
+    return value;
+  };
+  const parseTerm = () => {
+    let value = parseFactor();
+    while (tokens[position] === "*" || tokens[position] === "/") {
+      const operator = tokens[position++];
+      const right = parseFactor();
+      if (operator === "/" && right === 0) throw new Error("Cannot divide by zero.");
+      value = operator === "*" ? value * right : value / right;
+    }
+    return value;
+  };
+  const parseFactor = () => {
+    if (tokens[position] === "+" || tokens[position] === "-") {
+      const operator = tokens[position++];
+      const value = parseFactor();
+      return operator === "-" ? -value : value;
+    }
+    if (tokens[position] === "(") {
+      position++;
+      const value = parseExpression();
+      if (tokens[position++] !== ")") throw new Error("Unclosed expression.");
+      return value;
+    }
+    const token = tokens[position++];
+    if (!token || !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(token)) {
+      throw new Error("Invalid expression.");
+    }
+    return Number(token);
+  };
+
   try {
-    const result = Function(`"use strict"; return (${cleaned})`)();
-    return Number.isFinite(result) ? Math.max(0, Number(result.toFixed(2))) : 0;
+    const result = parseExpression();
+    return position === tokens.length && Number.isFinite(result)
+      ? Math.max(0, Number(result.toFixed(2)))
+      : 0;
   } catch {
-    return parseFloat(cleaned) || 0;
+    return 0;
   }
 }
 
@@ -98,86 +144,223 @@ export function getNextRecurrenceDateISO(dateStr, frequency = "Monthly") {
   return `${targetMonth.getFullYear()}-${String(targetMonth.getMonth() + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
 }
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function parseMagicTime(text) {
+  const match = text.match(
+    /\b(?:at\s*)?((?:1[0-2]|0?[1-9]):[0-5]\d\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|(?:1[0-2]|0?[1-9])\s*(?:am|pm))\b/i,
+  );
+  if (!match) return null;
+  const time = match[1].replace(/\s+/g, "").toLowerCase();
+  const timeMatch = /^(\d{1,2})(?::(\d{2}))?(am|pm)?$/.exec(time);
+  if (!timeMatch) return null;
+  let hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2] || 0);
+  const suffix = timeMatch[3];
+  if (suffix) {
+    if (hour < 1 || hour > 12) return null;
+    if (suffix === "am") hour %= 12;
+    else if (hour !== 12) hour += 12;
+  }
+  if (hour > 23) return null;
+  const period = hour >= 12 ? "pm" : "am";
+  return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${period}`;
+}
+
 export function smartParseMagicInput(rawText, categories = [], accounts = []) {
   if (!rawText || !rawText.trim()) return null;
   const text = rawText.trim();
 
-  const amountMatch = text.match(/(?:₹|rs\.?\s*)?(\d+(?:,\d+)*(?:\.\d+)?)/i);
+  const timeMatch = text.match(
+    /\b(?:at\s*)?(?:(?:1[0-2]|0?[1-9]):[0-5]\d\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|(?:1[0-2]|0?[1-9])\s*(?:am|pm))\b/i,
+  );
+  const isoDateMatch = text.match(/\b\d{4}-\d{2}-\d{2}\b/);
+  const amountSource = text
+    .replace(timeMatch?.[0] || "", " ")
+    .replace(isoDateMatch?.[0] || "", " ");
+  const amountMatch = amountSource.match(
+    /(?:₹|rs\.?\s*)?(\d+(?:,\d+)*(?:\.\d+)?)(?:\s*(k|thousand|l|lakh|lakhs|m|million)\b)?/i,
+  );
+  const amountSuffix = amountMatch?.[2]?.toLowerCase();
+  const amountMultiplier = ["k", "thousand"].includes(amountSuffix)
+    ? 1000
+    : ["l", "lakh", "lakhs"].includes(amountSuffix)
+      ? 100000
+      : ["m", "million"].includes(amountSuffix)
+        ? 1000000
+        : 1;
   const amount = amountMatch
-    ? parseFloat(amountMatch[1].replace(/,/g, ""))
+    ? parseFloat(amountMatch[1].replace(/,/g, "")) * amountMultiplier
     : "";
   const lower = text.toLowerCase();
 
   let type = "expense";
-  if (
-    /\b(salary|income|credited|received|bonus|dividend|ipo|gift)\b/i.test(lower)
+  if (/\b(transfer|move|moved|send|sent)\b/i.test(lower)) {
+    type = "transfer";
+  } else if (
+    /\b(salary|income|credited|received|bonus|dividend|ipo|gift|refund|cashback)\b/i.test(lower)
   ) {
     type = "income";
-  } else if (/\b(transfer|moved|sent to)\b/i.test(lower)) {
-    type = "transfer";
   }
 
-  let accountId = accounts[0]?.id || "acc_union";
-  for (const acc of accounts) {
-    if (lower.includes(acc.name.toLowerCase().split(" ")[0])) {
-      if ((type === "income" || type === "transfer") && acc.type === "credit")
-        continue;
-      accountId = acc.id;
-      break;
-    }
-  }
-  if (type === "expense" && /\b(cc|card|moneyback)\b/i.test(lower)) {
-    const cc = accounts.find((a) => a.type === "credit");
-    if (cc) accountId = cc.id;
-  }
+  const eligibleAccounts = accounts.filter(
+    (account) =>
+      account.type !== "liquid_mf" &&
+      !((type === "income" || type === "transfer") && account.type === "credit"),
+  );
+  const fromClause = /\bfrom\s+(.+?)(?=\s+\bto\b|$)/i.exec(text)?.[1];
+  const toClause = /\b(?:to|into)\s+(.+?)(?=\s+\bfrom\b|\s+\bfor\b|$)/i.exec(text)?.[1];
+  const sourceSearchText = toClause ? text.replace(toClause, " ") : text;
+  const sourceMatch = matchAccountMention(sourceSearchText, eligibleAccounts);
+  const mentionedAccount = sourceMatch.account;
+  const sourceMentionAmbiguous = sourceMatch.ambiguous;
+  const defaultAccount =
+    eligibleAccounts.find((account) => account.type !== "credit") ||
+    eligibleAccounts[0];
+  const creditAccounts = accounts.filter((account) => account.type === "credit");
+  const creditMatch = matchAccountMention(text, creditAccounts);
+  const mentionedCreditCard = creditMatch.account;
+  const cardAccount =
+    type === "expense" && /\b(credit card|card|cc)\b/i.test(lower)
+      ? mentionedCreditCard || (creditAccounts.length === 1 ? creditAccounts[0] : null)
+      : null;
+  const contextualSource = fromClause
+    ? matchAccountMention(fromClause, eligibleAccounts).account
+    : null;
+  const accountAmbiguous =
+    !contextualSource &&
+    !mentionedAccount &&
+    !cardAccount &&
+    (sourceMentionAmbiguous ||
+      (type === "expense" &&
+        /\b(credit card|card|cc)\b/i.test(lower) &&
+        creditAccounts.length > 1 &&
+        !mentionedCreditCard));
+  const sourceAccount = cardAccount || contextualSource || mentionedAccount || defaultAccount;
+  const resolvedSourceAccountId = sourceAccount?.id || "";
+  const destinationMention =
+    type === "transfer" && toClause
+      ? matchAccountMention(toClause, eligibleAccounts).account
+      : null;
+  const destinationAmbiguous =
+    type === "transfer" &&
+    Boolean(toClause) &&
+    matchAccountMention(toClause, eligibleAccounts).ambiguous;
+  const toAccountId =
+    type === "transfer" &&
+    /\b(?:to|into)\s+(?:my\s+)?(?:liquid\s*(?:mf|fund)|emergency\s+reserve)\b/i.test(lower)
+      ? "emergency_reserve"
+      : destinationMention && destinationMention.id !== resolvedSourceAccountId
+        ? destinationMention.id
+        : undefined;
 
   const relevantCats = categories.filter((c) =>
     type === "income" ? c.type === "income" : c.type === "expense",
   );
-  let matchedCat =
-    relevantCats.find((c) => c.id === "cat_other") || relevantCats[0];
+  const normalizedText = ` ${normalizeSearchText(text)} `;
+  let matchedCat = null;
   let matchedSub = "";
 
   for (const cat of relevantCats) {
-    const subHit = (cat.subcategories || []).find((s) =>
-      lower.includes(s.toLowerCase()),
-    );
+    const subHit = (cat.subcategories || []).find((sub) => {
+      const phrase = normalizeSearchText(sub);
+      if (phrase && normalizedText.includes(` ${phrase} `)) return true;
+      return phrase
+        .split(" ")
+        .some((word) => word.length >= 3 && normalizedText.includes(` ${word} `));
+    });
     if (subHit) {
       matchedCat = cat;
       matchedSub = subHit;
       break;
     }
-    const kwHit = (cat.keywords || []).some((k) =>
-      lower.includes(k.toLowerCase()),
-    );
-    if (kwHit || lower.includes(cat.name.toLowerCase().split(" ")[0])) {
+  }
+
+  for (const cat of relevantCats) {
+    if (matchedCat) break;
+    const normalizedName = normalizeSearchText(cat.name);
+    const keywordHit = (cat.keywords || []).some((keyword) => {
+      const phrase = normalizeSearchText(keyword);
+      return phrase && normalizedText.includes(` ${phrase} `);
+    });
+    if (
+      keywordHit ||
+      (normalizedName && normalizedText.includes(` ${normalizedName} `))
+    ) {
       matchedCat = cat;
-      matchedSub = cat.subcategories?.[0] || "";
       break;
     }
   }
 
-  let narrative = text
-    .replace(amountMatch ? amountMatch[0] : "", "")
-    .replace(
-      /\b(via|using|from|in|on|union|sbi|hdfc|idfc|card|cc|gpay|upi)\b/gi,
-      " ",
-    )
+  matchedCat =
+    matchedCat ||
+    relevantCats.find((cat) => cat.id === "cat_other") ||
+    relevantCats[0];
+  const explicitNote = /\b(?:note|memo|description)\s*[:=-]\s*(.+)$/i.exec(text)?.[1];
+  let narrative = (explicitNote || text)
+    .replace(amountMatch?.[0] || "", " ")
+    .replace(timeMatch?.[0] || "", " ")
+    .replace(isoDateMatch?.[0] || "", " ")
+    .replace(/\b(?:today|yesterday|via|using|from|into|my|i|me|spent|paid|buy|bought|purchase|purchased|received|income|salary|transfer|move|moved|send|sent|gpay|upi|bank|account|cash|wallet|credit|card|savings|current|transaction|expense|note|memo|description)\b/gi, " ");
+  const matchedTokens = new Set([
+    ...sourceMatch.matchedTokens,
+    ...creditMatch.matchedTokens,
+    ...(fromClause ? matchAccountMention(fromClause, eligibleAccounts).matchedTokens : []),
+    ...(toClause ? matchAccountMention(toClause, eligibleAccounts).matchedTokens : []),
+  ]);
+  matchedTokens.forEach((token) => {
+    if (token) {
+      narrative = narrative.replace(
+        new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "ig"),
+        " ",
+      );
+    }
+  });
+  narrative = narrative
+    .replace(/["'`]/g, "")
     .replace(/\s+/g, " ")
+    .replace(/^[,.;:]+|[,.;:]+$/g, "")
     .trim();
+  let trimmedNarrative;
+  do {
+    trimmedNarrative = narrative;
+    narrative = narrative
+      .replace(/^(?:(?:at|for|to|on|in|with|and|the|a|an)\s+)+/i, "")
+      .replace(/(?:\s+(?:at|for|to|on|in|with|and|the|a|an))+$/i, "")
+      .trim();
+  } while (narrative !== trimmedNarrative);
 
   if (narrative) {
     narrative = narrative.charAt(0).toUpperCase() + narrative.slice(1);
   }
 
-  return {
+  const result = {
     amount,
     type,
-    accountId,
+    accountId: resolvedSourceAccountId,
+    accountExplicit: Boolean(cardAccount || contextualSource || mentionedAccount),
+    accountAmbiguous,
+    destinationAmbiguous,
     categoryId: matchedCat?.id || "cat_other",
     subcategory: matchedSub,
     description: narrative,
   };
+  if (toAccountId) result.toAccountId = toAccountId;
+  if (timeMatch) result.time = parseMagicTime(text);
+  if (isoDateMatch) result.date = isoDateMatch[0];
+  else if (/\byesterday\b/i.test(text)) {
+    const yesterday = parseLocalDateISO(getTodayISO());
+    yesterday.setDate(yesterday.getDate() - 1);
+    result.date = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, "0")}-${String(yesterday.getDate()).padStart(2, "0")}`;
+  } else if (/\btoday\b/i.test(text)) {
+    result.date = getTodayISO();
+  }
+  return result;
 }
 
 function buildPaletteEmailHTML({
@@ -284,7 +467,8 @@ export async function triggerWorkableAlert({
   codeHighlight = "",
 }) {
   const targetEmail = profile?.email?.trim();
-  let emailDelivered = false;
+  let emailAccepted = false;
+  let deliveryError = "";
 
   // 1. SEND EMAIL FIRST (Never blocked by Browser Notification permissions)
   if (targetEmail) {
@@ -325,17 +509,39 @@ export async function triggerWorkableAlert({
     });
 
     try {
+      const idToken = await auth?.currentUser?.getIdToken();
+      if (!idToken) {
+        throw new Error("Sign in to send this email.");
+      }
       const response = await fetch("/api/webhook", {
         method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+          Authorization: `Bearer ${idToken}`,
+        },
         body: payloadStr,
       });
       if (!response.ok) {
-        throw new Error(`Email webhook returned HTTP ${response.status}`);
+        let responseError = "";
+        try {
+          const result = await response.json();
+          if (typeof result.error === "string") {
+            responseError = result.error.slice(0, 200);
+          }
+        } catch {
+          // Use the status below when the endpoint does not return JSON.
+        }
+        throw new Error(
+          responseError || `Email service returned HTTP ${response.status}.`,
+        );
       }
-      emailDelivered = true;
+      emailAccepted = true;
     } catch (error) {
       console.error("Email delivery failed:", error);
+      deliveryError =
+        error instanceof Error
+          ? error.message
+          : "Email delivery failed. Check the email service configuration.";
     }
   }
 
@@ -363,73 +569,12 @@ export async function triggerWorkableAlert({
     // Ignore notification constructor restrictions on mobile browsers
   }
 
-  return emailDelivered;
-}
-
-/**
- * CROSS-DEVICE CLOUD DATABASE PULL (Phone <-> Desktop)
- */
-export async function pullCloudDatabase() {
-  try {
-    const res = await fetch(`/api/webhook?action=pull_db&t=${Date.now()}`, {
-      method: "GET",
-      redirect: "follow",
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    return json?.data || null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * CROSS-DEVICE CLOUD DATABASE PUSH + 24/7 OFFLINE SCHEDULE SYNC
- */
-export async function pushCloudDatabase(fullData, ccAlerts = []) {
-  if (!fullData) return false;
-
-  const schedulePayload = {
-    name: fullData.profile?.name || "Suyog",
-    email: fullData.profile?.email || "",
-    emailVerified: Boolean(fullData.profile?.emailVerified),
-    ccList: ccAlerts.map((c) => ({
-      name: c.name,
-      used: c.used,
-      recurringDay: c.recurringDay,
-    })),
-    autopayRules: (fullData.autopayRules || []).map((r) => ({
-      title: r.title,
-      amount: r.amount,
-      frequency: r.frequency,
-      deductDate: r.deductDate,
-      deductDay: r.deductDay,
-    })),
-    manualAlerts: (fullData.manualAlerts || []).map((m) => ({
-      title: m.title,
-      amount: m.amount,
-      alertDate: m.alertDate,
-    })),
-    syncedAt: new Date().toISOString(),
+  return {
+    accepted: emailAccepted,
+    error:
+      deliveryError ||
+      (emailAccepted ? "" : "No recipient email address is configured."),
   };
-
-  const bodyStr = JSON.stringify({
-    action: "sync_db",
-    db: fullData,
-    schedule: schedulePayload,
-  });
-
-  try {
-    const res = await fetch("/api/webhook", {
-      method: "POST",
-      redirect: "follow",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: bodyStr,
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
 }
 
 export async function analyzeGoalWithAI(goal, finState, profile) {
@@ -486,10 +631,10 @@ export async function analyzeGoalWithAI(goal, finState, profile) {
     isPossibleVerdict,
     summary:
       effectiveMonthlyIncome > 0
-        ? `Based on your monthly income of ${formatINR(effectiveMonthlyIncome)} and current SBI balance of ${formatINR(finState.sbiBalance)}, saving ${formatINR(requiredMonthly)}/month takes ${salarySharePct}% of your monthly income over ${monthsLeft} months.`
+        ? `Based on your monthly income of ${formatINR(effectiveMonthlyIncome)} and available bank balance of ${formatINR(finState.selectedBankBalance)}, saving ${formatINR(requiredMonthly)}/month takes ${salarySharePct}% of your monthly income over ${monthsLeft} months.`
         : `You need ${formatINR(requiredMonthly)}/month for ${monthsLeft} months. Set your Monthly Salary in Profile to benchmark against your income.`,
     recommendations: [
-      `SBI Balance Check: Your SBI Savings Account currently holds ${formatINR(finState.sbiBalance)}. Goal contributions deduct directly from SBI.`,
+      `Available across your bank accounts: ${formatINR(finState.selectedBankBalance)}.`,
       effectiveMonthlyIncome > 0
         ? `Monthly Surplus after expenses is ${formatINR(monthlySurplus)} (Income ${formatINR(effectiveMonthlyIncome)} − Spent ${formatINR(finState.monthlyExpense)}).`
         : `Record your salary inflow or set Monthly Salary in Profile to see surplus coverage.`,
@@ -502,9 +647,18 @@ function getNextPaymentDateInfo(cc = {}) {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  let recurringDay = Number(cc.billDueDay) || 5;
+  let recurringDay = Number(cc.billDueDay) || 0;
   if (cc.billDueDate && /^\d{4}-\d{2}-\d{2}$/.test(cc.billDueDate)) {
     recurringDay = Number(cc.billDueDate.split("-")[2]) || recurringDay;
+  }
+  if (recurringDay < 1 || recurringDay > 31) {
+    return {
+      recurringDay: null,
+      nextDueISO: "",
+      nextDueLabel: "Not set",
+      isDueToday: false,
+      isOnOrBeforeDue: false,
+    };
   }
   recurringDay = Math.min(Math.max(recurringDay, 1), 31);
 
@@ -557,6 +711,7 @@ export function computeFinancialState(
     categories = [],
     settings = {},
     liquidMfOpeningBalance = 0,
+    emergencyReserve = {},
   } = data;
 
   const accountMap = {};
@@ -601,7 +756,9 @@ export function computeFinancialState(
         acc.txCount += 1;
       }
     } else if (tx.type === "transfer") {
-      if (acc && !acc.isLiability) {
+      if (tx.accountId === "liquid_mf") {
+        liquidMfBalance = Number((liquidMfBalance - amt).toFixed(2));
+      } else if (acc && !acc.isLiability) {
         acc.currentBalance = Number((acc.currentBalance - amt).toFixed(2));
         acc.txCount += 1;
       }
@@ -634,13 +791,41 @@ export function computeFinancialState(
   });
 
   const computedAccounts = Object.values(accountMap);
+  computedAccounts.forEach((account) => {
+    account.grossBalance = account.currentBalance;
+  });
+  const liquidMfGrossBalance = liquidMfBalance;
   const bankAccounts = computedAccounts.filter((a) => a.isBank);
-  const sbiBalance = Number(
-    (accountMap["acc_sbi"]?.currentBalance || 0).toFixed(2),
+  const configuredReserveAmount = Math.max(
+    0,
+    Number(emergencyReserve.amount) || 0,
   );
-  const hdfcBankBalance = Number(
-    (accountMap["acc_hdfc"]?.currentBalance || 0).toFixed(2),
+  const reserveSourceAccount =
+    emergencyReserve.sourceAccountId === "liquid_mf"
+      ? null
+      : accountMap[emergencyReserve.sourceAccountId];
+  const reserveSourceBalance =
+    emergencyReserve.sourceAccountId === "liquid_mf"
+      ? liquidMfGrossBalance
+      : reserveSourceAccount?.grossBalance || 0;
+  const emergencyReserveBalance = Math.min(
+    configuredReserveAmount,
+    Math.max(0, reserveSourceBalance),
   );
+  const emergencyReserveShortfall = Number(
+    (configuredReserveAmount - emergencyReserveBalance).toFixed(2),
+  );
+  if (emergencyReserve.sourceAccountId === "liquid_mf") {
+    liquidMfBalance = Number(
+      (liquidMfBalance - emergencyReserveBalance).toFixed(2),
+    );
+  } else if (reserveSourceAccount) {
+    reserveSourceAccount.reservedAmount = emergencyReserveBalance;
+    reserveSourceAccount.currentBalance = Number(
+      (reserveSourceAccount.currentBalance - emergencyReserveBalance).toFixed(2),
+    );
+  }
+  const emergencyReserveSourceBalance = Math.max(0, reserveSourceBalance);
 
   const selectedBankBalance = bankAccounts
     .filter((a) => a.includeInTotalBank !== false)
@@ -656,11 +841,12 @@ export function computeFinancialState(
 
   const creditCards = computedAccounts.filter((a) => a.type === "credit");
   const ccAlerts = creditCards.map((cc) => {
-    const limit = Number(cc.creditLimit) || 50000;
-    const thresholdPct = Number(cc.alertThresholdPct) || 10;
+    const limit = Math.max(0, Number(cc.creditLimit) || 0);
+    const thresholdPct = Math.max(0, Number(cc.alertThresholdPct) || 0);
     const thresholdAmt = (limit * thresholdPct) / 100;
     const used = Math.max(0, Number(cc.currentBalance.toFixed(2)));
-    const utilizationPct = Number(((used / limit) * 100).toFixed(1));
+    const utilizationPct =
+      limit > 0 ? Number(((used / limit) * 100).toFixed(1)) : 0;
     const dueInfo = getNextPaymentDateInfo(cc);
 
     return {
@@ -675,7 +861,7 @@ export function computeFinancialState(
       nextDueLabel: dueInfo.nextDueLabel,
       isDueToday: dueInfo.isDueToday,
       isBillPaidAndZero: used <= 0,
-      isExceeded: used >= thresholdAmt && used > 0,
+      isExceeded: thresholdAmt > 0 && used >= thresholdAmt && used > 0,
     };
   });
 
@@ -705,7 +891,9 @@ export function computeFinancialState(
   const isOverBudgetLimit =
     monthlySpendLimit > 0 && monthlyExpense > monthlySpendLimit;
 
-  const monthlySavings = Number((sbiBalance + liquidMfBalance).toFixed(2));
+  const monthlySavings = Number(
+    (allSpendableLiquidBalance + liquidMfBalance).toFixed(2),
+  );
   const savingsRate =
     monthlyIncome > 0
       ? Number(((monthlySavings / monthlyIncome) * 100).toFixed(1))
@@ -789,6 +977,7 @@ export function computeFinancialState(
   const totalAssets =
     allSpendableLiquidBalance +
     liquidMfBalance +
+    emergencyReserveBalance +
     totalInvestmentValue +
     totalGoalsSaved;
   const totalLiabilities = totalCreditCardDebt;
@@ -797,11 +986,13 @@ export function computeFinancialState(
   return {
     computedAccounts,
     bankAccounts,
-    sbiBalance,
-    hdfcBankBalance,
     selectedBankBalance,
     allSpendableLiquidBalance,
     liquidMfBalance,
+    emergencyReserveBalance,
+    emergencyReserveShortfall,
+    emergencyReserveSourceBalance,
+    liquidMfGrossBalance,
     pinnedAccounts,
     ccAlerts,
     monthlyIncome,

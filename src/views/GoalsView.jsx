@@ -3,7 +3,6 @@ import {
   Sparkles, Plus, Trash2, Pencil, X, CheckCircle2, AlertTriangle
 } from 'lucide-react';
 import { formatDateDisplay, formatINR, analyzeGoalWithAI } from '../engine/financeEngine';
-import { BrandLogo } from '../components/Sidebar';
 import CalendarDatePicker from '../components/CalendarDatePicker';
 
 export default function GoalsView({
@@ -12,7 +11,7 @@ export default function GoalsView({
   hideBalances,
   onAddGoal,
   onUpdateGoal,
-  onContributeGoalFromSbi,
+  onContributeGoal,
   onDeleteGoal
 }) {
   const [name, setName] = useState('');
@@ -22,9 +21,15 @@ export default function GoalsView({
   const [editingGoalId, setEditingGoalId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
   const [contribMap, setContribMap] = useState({});
+  const contributionAccounts = finState.computedAccounts.filter((account) => account.isLiquid);
+  const [contributionAccountId, setContributionAccountId] = useState(
+    contributionAccounts[0]?.id || '',
+  );
+  const contributionAccount =
+    contributionAccounts.find((account) => account.id === contributionAccountId) ||
+    contributionAccounts[0];
 
-  // Insufficient SBI Balance Alert Modal (Point 8)
-  const [sbiShortfallAlert, setSbiShortfallAlert] = useState(null);
+  const [shortfallAlert, setShortfallAlert] = useState(null);
 
   // AI Salary/Income Feasibility Modal
   const [selectedGoalForAI, setSelectedGoalForAI] = useState(null);
@@ -43,17 +48,17 @@ export default function GoalsView({
     const amt = parseFloat(contribMap[goal.id]);
     if (!amt || amt <= 0) return;
 
-    // Point 8: Check if contribution exceeds SBI balance
-    if (amt > finState.sbiBalance) {
-      setSbiShortfallAlert({
+    if (!contributionAccount || amt > contributionAccount.currentBalance) {
+      setShortfallAlert({
         goalName: goal.name,
         requested: amt,
-        available: finState.sbiBalance
+        accountName: contributionAccount?.name || 'available account',
+        available: contributionAccount?.currentBalance || 0
       });
       return;
     }
 
-    onContributeGoalFromSbi(goal.id, amt);
+    onContributeGoal(goal.id, amt, contributionAccount.id);
     setContribMap({ ...contribMap, [goal.id]: '' });
   };
 
@@ -62,17 +67,30 @@ export default function GoalsView({
       <div className="border-b hm-border pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted">
-            SBI-Backed Goal Reserves & AI Salary Feasibility
+            Savings Goals & AI Feasibility
           </span>
           <h1 className="text-2xl font-extrabold tracking-tight mt-0.5">
             Savings Goals
           </h1>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <BrandLogo brand="sbi" size={20} />
-          <span className="hm-text-muted">SBI Savings Available:</span>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <label htmlFor="goal-contribution-account" className="hm-text-muted">
+            Contribution account:
+          </label>
+          <select
+            id="goal-contribution-account"
+            value={contributionAccount?.id || ''}
+            onChange={(event) => setContributionAccountId(event.target.value)}
+            className="hm-input rounded-lg px-2 py-1.5"
+          >
+            {contributionAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
           <strong className="font-mono-num font-extrabold">
-            {formatINR(finState.sbiBalance, hideBalances, true)}
+            {formatINR(contributionAccount?.currentBalance || 0, hideBalances, true)} available
           </strong>
         </div>
       </div>
@@ -213,11 +231,11 @@ export default function GoalsView({
                     </div>
                   </div>
 
-                  {/* Contribute from SBI + Pencil Edit + Delete */}
+                  {/* Contribute from the selected account + Pencil Edit + Delete */}
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <input
                       type="number"
-                      placeholder="Deduct ₹ from SBI"
+                      placeholder="Contribute ₹"
                       value={contribMap[g.id] || ''}
                       onChange={(e) => setContribMap({ ...contribMap, [g.id]: e.target.value })}
                       className="hm-input font-mono-num w-36 rounded-xl px-3 py-2 outline-none"
@@ -226,7 +244,7 @@ export default function GoalsView({
                       onClick={() => handleContributeAttempt(g)}
                       className="px-3.5 py-2 rounded-xl hm-btn-primary font-bold flex items-center gap-1.5 cursor-pointer"
                     >
-                      <BrandLogo brand="sbi" size={14} /> + Contribute
+                      <Plus size={14} /> + Contribute
                     </button>
 
                     <button
@@ -255,22 +273,21 @@ export default function GoalsView({
         })}
       </div>
 
-      {/* INSUFFICIENT SBI BALANCE ALERT DIALOG (Point 8) */}
-      {sbiShortfallAlert && (
+      {shortfallAlert && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-sm rounded-2xl border hm-surface hm-border p-6 space-y-4 shadow-2xl text-xs">
             <div className="flex items-center gap-2.5 text-rose-500">
               <AlertTriangle size={22} />
-              <h3 className="text-base font-extrabold">Insufficient SBI Balance</h3>
+              <h3 className="text-base font-extrabold">Insufficient Balance</h3>
             </div>
             <p className="hm-text-muted leading-relaxed">
-              Goal contributions are deducted from your <strong>SBI Savings Account</strong>. You tried to contribute{' '}
-              <strong className="font-mono-num">{formatINR(sbiShortfallAlert.requested, false, true)}</strong> to{' '}
-              <strong>{sbiShortfallAlert.goalName}</strong>, but your available SBI balance is only{' '}
-              <strong className="font-mono-num">{formatINR(sbiShortfallAlert.available, false, true)}</strong>.
+              You tried to contribute{' '}
+              <strong className="font-mono-num">{formatINR(shortfallAlert.requested, false, true)}</strong> to{' '}
+              <strong>{shortfallAlert.goalName}</strong>, but {shortfallAlert.accountName} has only{' '}
+              <strong className="font-mono-num">{formatINR(shortfallAlert.available, false, true)}</strong> available.
             </p>
             <button
-              onClick={() => setSbiShortfallAlert(null)}
+              onClick={() => setShortfallAlert(null)}
               className="w-full py-2.5 rounded-xl hm-btn-primary font-extrabold uppercase tracking-wider cursor-pointer"
             >
               Understood
@@ -303,7 +320,7 @@ export default function GoalsView({
 
             {aiLoading || !aiResult ? (
               <div className="py-12 text-center text-xs hm-text-muted">
-                Analyzing against your monthly salary and SBI balance...
+                Analyzing against your monthly salary and available account balance...
               </div>
             ) : (
               <div className="space-y-4 text-xs">

@@ -1,10 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
-  BellRing, CalendarClock, Trash2, Mail, Pencil, Check, X, AlertTriangle
-} from 'lucide-react';
-import { AUTOPAY_FREQUENCIES } from '../data/defaults';
-import { formatDateDisplay, formatINR, getTodayISO } from '../engine/financeEngine';
-import CalendarDatePicker from '../components/CalendarDatePicker';
+  BellRing,
+  CalendarClock,
+  Trash2,
+  Mail,
+  Pencil,
+  Check,
+  X,
+  AlertTriangle,
+} from "lucide-react";
+import { AUTOPAY_FREQUENCIES } from "../data/defaults";
+import {
+  formatDateDisplay,
+  formatINR,
+  getTodayISO,
+} from "../engine/financeEngine";
+import CalendarDatePicker from "../components/CalendarDatePicker";
 
 export default function AutopayAlertsView({
   data,
@@ -17,15 +28,17 @@ export default function AutopayAlertsView({
   onUpdateSpendLimit,
   onAddManualAlert,
   onDeleteManualAlert,
-  onDispatchAlert
+  onDispatchAlert,
 }) {
   // Point 1: Create New Fixed Auto-Deducting Rule State
-  const [title, setTitle] = useState('');
-  const [category, setCategory] = useState('SIP');
-  const [amount, setAmount] = useState('');
-  const [frequency, setFrequency] = useState('Monthly');
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("SIP");
+  const [amount, setAmount] = useState("");
+  const [frequency, setFrequency] = useState("Monthly");
   const [deductDate, setDeductDate] = useState(getTodayISO());
-  const [accountId, setAccountId] = useState(data.accounts[0]?.id || 'acc_sbi');
+  const [accountId, setAccountId] = useState(
+    data.accounts.find((account) => account.type !== "credit")?.id || "",
+  );
 
   // Point 2: Full Edit State for Any Existing Rule via Pencil Icon
   const [editingRuleId, setEditingRuleId] = useState(null);
@@ -33,14 +46,16 @@ export default function AutopayAlertsView({
 
   // Point 5: Monthly Spend Limit (Budget Alert) Editor
   const [editingLimit, setEditingLimit] = useState(false);
-  const [limitDraft, setLimitDraft] = useState('');
+  const [limitDraft, setLimitDraft] = useState("");
 
   // Manual Reminder Form
-  const [mTitle, setMTitle] = useState('');
-  const [mAmount, setMAmount] = useState('');
+  const [mTitle, setMTitle] = useState("");
+  const [mAmount, setMAmount] = useState("");
   const [mDate, setMDate] = useState(getTodayISO());
 
-  const spendableBanks = (data.accounts || []).filter(a => a.type !== 'credit');
+  const spendableBanks = (data.accounts || []).filter(
+    (a) => a.type !== "credit",
+  );
 
   return (
     <div className="space-y-10">
@@ -55,7 +70,10 @@ export default function AutopayAlertsView({
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="px-3 py-1.5 rounded-xl border hm-surface hm-border font-semibold">
-            ✉️ {data.profile?.email ? `${data.profile.email} ${data.profile.emailVerified ? '✓' : ''}` : 'Add Email in Profile'}
+            ✉️{" "}
+            {data.profile?.email
+              ? `${data.profile.email} ${data.profile.emailVerified ? "✓" : ""}`
+              : "Add Email in Profile"}
           </span>
         </div>
       </div>
@@ -64,13 +82,23 @@ export default function AutopayAlertsView({
       <section className="p-5 rounded-2xl border hm-surface hm-border flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <AlertTriangle size={15} className={finState.isOverBudgetLimit ? 'text-rose-500' : 'hm-text-muted'} />
+            <AlertTriangle
+              size={15}
+              className={
+                finState.isOverBudgetLimit ? "text-rose-500" : "hm-text-muted"
+              }
+            />
             <h2 className="text-sm font-extrabold uppercase tracking-wider">
               Monthly Spending Limit (Over-Budget Alert)
             </h2>
           </div>
           <p className="hm-text-muted">
-            Current Month Expenses: <strong className="font-mono-num">{formatINR(finState.monthlyExpense, hideBalances)}</strong>. If your monthly spending crosses this limit, Hanakasu Mantri automatically emails you an alert.
+            Current Month Expenses:{" "}
+            <strong className="font-mono-num">
+              {formatINR(finState.monthlyExpense, hideBalances)}
+            </strong>
+            . If your monthly spending crosses this limit, Hanakasu Mantri
+            automatically emails you an alert.
           </p>
         </div>
 
@@ -107,13 +135,13 @@ export default function AutopayAlertsView({
             <span className="font-mono-num text-xl font-extrabold">
               {finState.monthlySpendLimit > 0
                 ? formatINR(finState.monthlySpendLimit, hideBalances)
-                : 'No Limit Set'}
+                : "No Limit Set"}
             </span>
             <button
               type="button"
               onClick={() => {
                 setEditingLimit(true);
-                setLimitDraft(String(finState.monthlySpendLimit || ''));
+                setLimitDraft(String(finState.monthlySpendLimit || ""));
               }}
               title="Edit Monthly Spending Limit"
               className="p-2 rounded-xl border hm-elevated hm-border hm-text-muted hover:opacity-100 cursor-pointer"
@@ -138,19 +166,19 @@ export default function AutopayAlertsView({
           onSubmit={(e) => {
             e.preventDefault();
             if (!title.trim() || !amount || !deductDate) return;
-            const dayNum = Number(deductDate.split('-')[2]) || 1;
+            const dayNum = Number(deductDate.split("-")[2]) || 1;
             onAddAutopay({
-              id: 'auto_' + Date.now(),
+              id: "auto_" + Date.now(),
               title: title.trim(),
               category,
               amount: Number(amount),
               frequency,
               deductDate,
               deductDay: dayNum,
-              accountId
+              accountId,
             });
-            setTitle('');
-            setAmount('');
+            setTitle("");
+            setAmount("");
           }}
           className="p-4 rounded-2xl border hm-surface hm-border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 text-xs"
         >
@@ -189,8 +217,10 @@ export default function AutopayAlertsView({
             onChange={(e) => setFrequency(e.target.value)}
             className="hm-input rounded-xl px-2.5 py-2.5 outline-none"
           >
-            {AUTOPAY_FREQUENCIES.map(freq => (
-              <option key={freq} value={freq}>{freq}</option>
+            {AUTOPAY_FREQUENCIES.map((freq) => (
+              <option key={freq} value={freq}>
+                {freq}
+              </option>
             ))}
           </select>
 
@@ -208,8 +238,10 @@ export default function AutopayAlertsView({
               onChange={(e) => setAccountId(e.target.value)}
               className="hm-input flex-1 rounded-xl px-2.5 py-2.5 outline-none"
             >
-              {spendableBanks.map(a => (
-                <option key={a.id} value={a.id}>{a.name}</option>
+              {spendableBanks.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
               ))}
             </select>
             <button
@@ -223,29 +255,41 @@ export default function AutopayAlertsView({
 
         {/* Point 2: Created Rules List with Full Pencil Edit for ALL Data */}
         <div className="divide-y hm-border border-y text-xs">
-          {(data.autopayRules || []).map(rule => {
+          {(data.autopayRules || []).map((rule) => {
             const isEditing = editingRuleId === rule.id;
-            const bankName = data.accounts.find(a => a.id === rule.accountId)?.name || 'SBI';
+            const bankName =
+              data.accounts.find((a) => a.id === rule.accountId)?.name || "Account removed";
 
             return (
               <div key={rule.id} className="py-4">
                 {isEditing ? (
                   <div className="p-4 rounded-2xl border hm-surface hm-border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 items-end">
                     <div>
-                      <label className="text-[10px] hm-text-muted block mb-1">Rule Title</label>
+                      <label className="text-[10px] hm-text-muted block mb-1">
+                        Rule Title
+                      </label>
                       <input
                         type="text"
-                        value={ruleDraft.title || ''}
-                        onChange={(e) => setRuleDraft({ ...ruleDraft, title: e.target.value })}
+                        value={ruleDraft.title || ""}
+                        onChange={(e) =>
+                          setRuleDraft({ ...ruleDraft, title: e.target.value })
+                        }
                         className="hm-input w-full rounded-xl px-3 py-2"
                       />
                     </div>
 
                     <div>
-                      <label className="text-[10px] hm-text-muted block mb-1">Category</label>
+                      <label className="text-[10px] hm-text-muted block mb-1">
+                        Category
+                      </label>
                       <select
-                        value={ruleDraft.category || 'SIP'}
-                        onChange={(e) => setRuleDraft({ ...ruleDraft, category: e.target.value })}
+                        value={ruleDraft.category || "SIP"}
+                        onChange={(e) =>
+                          setRuleDraft({
+                            ...ruleDraft,
+                            category: e.target.value,
+                          })
+                        }
                         className="hm-input w-full rounded-xl px-2.5 py-2"
                       >
                         <option value="SIP">SIP</option>
@@ -257,36 +301,58 @@ export default function AutopayAlertsView({
                     </div>
 
                     <div>
-                      <label className="text-[10px] hm-text-muted block mb-1">Amount (₹)</label>
+                      <label className="text-[10px] hm-text-muted block mb-1">
+                        Amount (₹)
+                      </label>
                       <input
                         type="number"
                         value={ruleDraft.amount ?? 0}
-                        onChange={(e) => setRuleDraft({ ...ruleDraft, amount: Number(e.target.value) })}
+                        onChange={(e) =>
+                          setRuleDraft({
+                            ...ruleDraft,
+                            amount: Number(e.target.value),
+                          })
+                        }
                         className="hm-input font-mono-num w-full rounded-xl px-3 py-2 font-bold"
                       />
                     </div>
 
                     <div>
-                      <label className="text-[10px] hm-text-muted block mb-1">Frequency</label>
+                      <label className="text-[10px] hm-text-muted block mb-1">
+                        Frequency
+                      </label>
                       <select
-                        value={ruleDraft.frequency || 'Monthly'}
-                        onChange={(e) => setRuleDraft({ ...ruleDraft, frequency: e.target.value })}
+                        value={ruleDraft.frequency || "Monthly"}
+                        onChange={(e) =>
+                          setRuleDraft({
+                            ...ruleDraft,
+                            frequency: e.target.value,
+                          })
+                        }
                         className="hm-input w-full rounded-xl px-2.5 py-2"
                       >
-                        {AUTOPAY_FREQUENCIES.map(freq => (
-                          <option key={freq} value={freq}>{freq}</option>
+                        {AUTOPAY_FREQUENCIES.map((freq) => (
+                          <option key={freq} value={freq}>
+                            {freq}
+                          </option>
                         ))}
                       </select>
                     </div>
 
                     <div>
-                      <label className="text-[10px] hm-text-muted block mb-1">Deduction Date</label>
+                      <label className="text-[10px] hm-text-muted block mb-1">
+                        Deduction Date
+                      </label>
                       <CalendarDatePicker
                         value={ruleDraft.deductDate || getTodayISO()}
                         onChange={(dVal) => {
                           if (!dVal) return;
-                          const dNum = Number(dVal.split('-')[2]) || 1;
-                          setRuleDraft({ ...ruleDraft, deductDate: dVal, deductDay: dNum });
+                          const dNum = Number(dVal.split("-")[2]) || 1;
+                          setRuleDraft({
+                            ...ruleDraft,
+                            deductDate: dVal,
+                            deductDay: dNum,
+                          });
                         }}
                         ariaLabel="Autopay deduction date"
                         className="w-full"
@@ -295,14 +361,27 @@ export default function AutopayAlertsView({
 
                     <div className="flex items-center gap-1.5">
                       <div className="flex-1">
-                        <label className="text-[10px] hm-text-muted block mb-1">Bank</label>
+                        <label className="text-[10px] hm-text-muted block mb-1">
+                          Bank
+                        </label>
                         <select
-                          value={ruleDraft.accountId || 'acc_sbi'}
-                          onChange={(e) => setRuleDraft({ ...ruleDraft, accountId: e.target.value })}
+                          value={
+                            ruleDraft.accountId ||
+                            spendableBanks[0]?.id ||
+                            ""
+                          }
+                          onChange={(e) =>
+                            setRuleDraft({
+                              ...ruleDraft,
+                              accountId: e.target.value,
+                            })
+                          }
                           className="hm-input w-full rounded-xl px-2 py-2"
                         >
-                          {spendableBanks.map(a => (
-                            <option key={a.id} value={a.id}>{a.name}</option>
+                          {spendableBanks.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name}
+                            </option>
                           ))}
                         </select>
                       </div>
@@ -333,9 +412,17 @@ export default function AutopayAlertsView({
                       <span className="px-2 py-0.5 rounded border hm-elevated hm-border text-[10px] font-bold mr-2">
                         {rule.category} • {rule.frequency}
                       </span>
-                      <strong className="text-sm font-extrabold">{rule.title}</strong>
+                      <strong className="text-sm font-extrabold">
+                        {rule.title}
+                      </strong>
                       <span className="hm-text-muted ml-2">
-                        (Deduction Date: <strong>{rule.deductDate ? formatDateDisplay(rule.deductDate) : `Day ${rule.deductDay}`}</strong> • {bankName})
+                        (Deduction Date:{" "}
+                        <strong>
+                          {rule.deductDate
+                            ? formatDateDisplay(rule.deductDate)
+                            : `Day ${rule.deductDay}`}
+                        </strong>{" "}
+                        • {bankName})
                       </span>
                     </div>
 
@@ -350,7 +437,7 @@ export default function AutopayAlertsView({
                           setEditingRuleId(rule.id);
                           setRuleDraft({
                             ...rule,
-                            deductDate: rule.deductDate || getTodayISO()
+                            deductDate: rule.deductDate || getTodayISO(),
                           });
                         }}
                         title="Edit All Rule Details"
@@ -395,13 +482,13 @@ export default function AutopayAlertsView({
               e.preventDefault();
               if (!mTitle.trim()) return;
               onAddManualAlert({
-                id: 'malert_' + Date.now(),
+                id: "malert_" + Date.now(),
                 title: mTitle.trim(),
                 amount: Number(mAmount) || 0,
-                alertDate: mDate
+                alertDate: mDate,
               });
-              setMTitle('');
-              setMAmount('');
+              setMTitle("");
+              setMAmount("");
             }}
             className="grid grid-cols-1 sm:grid-cols-3 gap-2.5"
           >
@@ -435,12 +522,16 @@ export default function AutopayAlertsView({
           </form>
 
           <div className="divide-y hm-border border-t">
-            {(data.manualAlerts || []).map(ma => (
-              <div key={ma.id} className="py-3 flex items-center justify-between gap-2">
+            {(data.manualAlerts || []).map((ma) => (
+              <div
+                key={ma.id}
+                className="py-3 flex items-center justify-between gap-2"
+              >
                 <div>
                   <p className="font-bold">{ma.title}</p>
                   <p className="text-[11px] hm-text-muted">
-                    Date: {formatDateDisplay(ma.alertDate)} {ma.amount > 0 ? `• ${formatINR(ma.amount)}` : ''}
+                    Date: {formatDateDisplay(ma.alertDate)}{" "}
+                    {ma.amount > 0 ? `• ${formatINR(ma.amount)}` : ""}
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -448,7 +539,7 @@ export default function AutopayAlertsView({
                     onClick={() =>
                       onDispatchAlert(
                         `Reminder: ${ma.title} (${formatINR(ma.amount)}) scheduled for ${formatDateDisplay(ma.alertDate)}.`,
-                        'PAYMENT REMINDER'
+                        "PAYMENT REMINDER",
                       )
                     }
                     className="px-3 py-1.5 rounded-lg border hm-elevated hm-border font-bold flex items-center gap-1.5 cursor-pointer"
@@ -470,13 +561,13 @@ export default function AutopayAlertsView({
         <div className="lg:col-span-6 space-y-4 text-xs">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-extrabold uppercase tracking-wider flex items-center gap-2">
-              <Mail size={15} /> Dispatched Email Log
+              <Mail size={15} /> Email Request Log
             </h2>
             <button
               onClick={() =>
                 onDispatchAlert(
                   `Executive Portfolio Summary: Selected Banks ${formatINR(finState.selectedBankBalance)}, Net Worth ${formatINR(finState.netWorth)}.`,
-                  'PORTFOLIO STATEMENT'
+                  "PORTFOLIO STATEMENT",
                 )
               }
               className="px-3.5 py-1.5 rounded-lg border hm-elevated hm-border font-bold flex items-center gap-1.5 cursor-pointer"
@@ -487,12 +578,21 @@ export default function AutopayAlertsView({
 
           <div className="divide-y hm-border border-y max-h-64 overflow-y-auto">
             {(data.alertLogs || []).length === 0 ? (
-              <p className="py-8 text-center hm-text-muted">No email dispatches recorded yet.</p>
+              <p className="py-8 text-center hm-text-muted">
+                No email requests recorded yet.
+              </p>
             ) : (
-              data.alertLogs.map(log => (
+              data.alertLogs.map((log) => (
                 <div key={log.id} className="py-2.5 space-y-0.5">
                   <div className="flex justify-between text-[10px] font-bold hm-text-muted">
-                    <span>{log.channel}</span>
+                    <span>
+                      {log.channel?.startsWith("Email Dispatch →")
+                        ? log.channel.replace(
+                            "Email Dispatch →",
+                            "Prior request (delivery unconfirmed) →",
+                          )
+                        : log.channel}
+                    </span>
                     <span>{log.time}</span>
                   </div>
                   <p className="font-semibold">{log.message}</p>

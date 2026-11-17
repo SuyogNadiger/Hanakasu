@@ -12,7 +12,7 @@ export default function AccountsView({
   finState,
   hideBalances,
   onAlterBalance,
-  onPayCreditCardFromHdfc,
+  onPayCreditCard,
   onTogglePinHome,
   onUpdateAccountMeta,
   onAddAccount,
@@ -20,34 +20,22 @@ export default function AccountsView({
 }) {
   const [editingId, setEditingId] = useState(null);
   const [balanceVal, setBalanceVal] = useState('');
-  const [editingDueDateId, setEditingDueDateId] = useState(null);
-  const [dueDateDraft, setDueDateDraft] = useState('');
+  const [editingCardSettingsId, setEditingCardSettingsId] = useState(null);
+  const [cardSettingsDraft, setCardSettingsDraft] = useState({});
   const [showAddModal, setShowAddModal] = useState(false);
-  const [hdfcShortfallAlert, setHdfcShortfallAlert] = useState(null);
 
   const [name, setName] = useState('');
   const [nickname, setNickname] = useState('');
   const [type, setType] = useState('bank');
-
-  const hdfcBankObj = finState.computedAccounts.find(a => a.id === 'acc_hdfc');
-  const hdfcBalance = Number(hdfcBankObj?.currentBalance) || 0;
+  const [creditLimit, setCreditLimit] = useState('');
+  const [alertThresholdPct, setAlertThresholdPct] = useState('');
+  const [billDueDate, setBillDueDate] = useState('');
+  const [paymentSourceAccountId, setPaymentSourceAccountId] = useState('');
+  const bankAccounts = finState.computedAccounts.filter((account) => account.type === 'bank');
   const pinnedCount = finState.computedAccounts.filter(a => a.pinnedOnHome).length;
 
   const handleBillPaidClick = (cc) => {
-    const dueAmount = Number(cc.used) || 0;
-    if (dueAmount <= 0) return;
-
-    if (hdfcBalance < dueAmount) {
-      setHdfcShortfallAlert({
-        cardName: cc.name,
-        billAmount: dueAmount,
-        hdfcAvailable: hdfcBalance,
-        shortfall: Number((dueAmount - hdfcBalance).toFixed(2))
-      });
-      return;
-    }
-
-    onPayCreditCardFromHdfc(cc);
+    onPayCreditCard(cc);
   };
 
   return (
@@ -69,10 +57,10 @@ export default function AccountsView({
         </button>
       </div>
 
-      {/* 1. HDFC MONEYBACK+ CREDIT CARD STRIP */}
+      {/* Credit cards */}
       <section className="space-y-3">
         <span className="text-[11px] font-bold uppercase tracking-widest hm-text-muted block">
-          Credit Card (10% Alert Guard & Auto-Monthly Due Email Active)
+          Credit Cards
         </span>
 
         {finState.ccAlerts.map(cc => {
@@ -91,12 +79,14 @@ export default function AccountsView({
                     <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-lg font-extrabold">{cc.name}</h2>
                       <span className="text-[10px] px-2.5 py-0.5 rounded-full border hm-elevated hm-border font-bold">
-                        Limit {formatINR(cc.limit, hideBalances)}
+                        {cc.limit > 0 ? `Limit ${formatINR(cc.limit, hideBalances)}` : 'Limit not set'}
                       </span>
                     </div>
                     <p className="text-xs hm-text-muted mt-0.5">
-                      Auto-Monthly Due: <strong>{cc.nextDueLabel}</strong> • HDFC Salary Account:{' '}
-                      <strong>{formatINR(hdfcBalance, hideBalances, true)}</strong>
+                      Monthly Due: <strong>{cc.nextDueLabel}</strong> • Payment account:{' '}
+                      <strong>
+                        {bankAccounts.find((account) => account.id === cc.paymentSourceAccountId)?.name || 'Not set'}
+                      </strong>
                     </p>
                   </div>
                 </div>
@@ -114,7 +104,7 @@ export default function AccountsView({
                   <button
                     type="button"
                     onClick={() => handleBillPaidClick(cc)}
-                    disabled={isZeroDue}
+                    disabled={isZeroDue || !cc.paymentSourceAccountId}
                     className={`px-4 py-2 rounded-xl font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 transition ${
                       isZeroDue
                         ? 'border hm-border hm-elevated opacity-40 cursor-not-allowed'
@@ -177,7 +167,11 @@ export default function AccountsView({
 
                 <div className="space-y-1.5">
                   <div className="flex justify-between text-xs font-bold">
-                    <span>Utilization (10% Cap: {formatINR(cc.thresholdAmt, hideBalances)})</span>
+                    <span>
+                      {cc.thresholdAmt > 0
+                        ? `Utilization (${cc.thresholdPct}% Alert: ${formatINR(cc.thresholdAmt, hideBalances)})`
+                        : 'Alert threshold not set'}
+                    </span>
                     <span className="font-mono-num">{cc.utilizationPct}%</span>
                   </div>
                   <div className="w-full h-2 rounded-full hm-elevated overflow-hidden">
@@ -190,74 +184,118 @@ export default function AccountsView({
                   </div>
                   {cc.isExceeded && (
                     <p className="text-[11px] text-rose-500 font-bold flex items-center gap-1">
-                      <AlertTriangle size={12} /> Crossed 10% ({formatINR(cc.thresholdAmt)}) threshold
+                      <AlertTriangle size={12} /> Crossed {cc.thresholdPct}% ({formatINR(cc.thresholdAmt)}) threshold
                     </p>
                   )}
                 </div>
 
-                {/* POINT 4: SET DUE DATE ONCE — REPEATS ON SAME DAY EVERY MONTH AUTOMATICALLY */}
                 <div className="flex items-center justify-between md:justify-end gap-2.5 text-xs">
-                  {editingDueDateId === cc.id ? (
-                    <form
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const dayNum = Math.min(Math.max(Number(dueDateDraft.split('-')[2]) || 5, 1), 31);
-                        onUpdateAccountMeta(cc.id, {
-                          billDueDate: dueDateDraft,
-                          billDueDay: dayNum
-                        });
-                        setEditingDueDateId(null);
-                      }}
-                      className="flex items-center gap-2"
-                    >
-                      <CalendarDatePicker
-                        required
-                        value={dueDateDraft}
-                        onChange={setDueDateDraft}
-                        ariaLabel={`${cc.name} credit card due date`}
-                        className="w-44"
-                      />
-                      <button
-                        type="submit"
-                        title="Save due date"
-                        className="p-1.5 rounded-lg hm-btn-primary cursor-pointer"
-                      >
-                        <Check size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingDueDateId(null)}
-                        title="Cancel"
-                        className="p-1.5 rounded-lg border hm-border cursor-pointer"
-                      >
-                        <X size={13} />
-                      </button>
-                    </form>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <div className="text-right">
-                        <span className="text-[10px] font-bold uppercase tracking-wider hm-text-muted block">
-                          Monthly Due Date
-                        </span>
-                        <span className="font-bold">
-                          (Next: {dueDateLabel})
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDueDateDraft(cc.nextDueISO);
-                          setEditingDueDateId(cc.id);
-                        }}
-                        title="Change Recurring Monthly Due Date"
-                        className="p-1.5 rounded-lg border hm-elevated hm-border hm-text-muted hover:opacity-100 cursor-pointer"
-                      >
-                        <Pencil size={13} />
-                      </button>
-                    </div>
-                  )}
+                  <div className="text-right">
+                    <span className="text-[10px] font-bold uppercase tracking-wider hm-text-muted block">
+                      Monthly Due Date
+                    </span>
+                    <span className="font-bold">{dueDateLabel || 'Not set'}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCardSettingsDraft({
+                        name: cc.name,
+                        creditLimit: cc.creditLimit ?? '',
+                        alertThresholdPct: cc.alertThresholdPct ?? '',
+                        billDueDate: cc.billDueDate || '',
+                        paymentSourceAccountId: cc.paymentSourceAccountId || '',
+                      });
+                      setEditingCardSettingsId(cc.id);
+                    }}
+                    title="Edit credit card settings"
+                    className="p-1.5 rounded-lg border hm-elevated hm-border hm-text-muted hover:opacity-100 cursor-pointer"
+                  >
+                    <Pencil size={13} />
+                  </button>
                 </div>
               </div>
+              {editingCardSettingsId === cc.id && (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const dueDay = Number(cardSettingsDraft.billDueDate.split('-')[2]);
+                    onUpdateAccountMeta(cc.id, {
+                      name: cardSettingsDraft.name.trim(),
+                      creditLimit: Number(cardSettingsDraft.creditLimit),
+                      alertThresholdPct: Number(cardSettingsDraft.alertThresholdPct),
+                      billDueDate: cardSettingsDraft.billDueDate,
+                      billDueDay: dueDay,
+                      paymentSourceAccountId: cardSettingsDraft.paymentSourceAccountId,
+                    });
+                    setEditingCardSettingsId(null);
+                  }}
+                  className="grid grid-cols-1 gap-3 border-t hm-border pt-4 sm:grid-cols-2 lg:grid-cols-5"
+                >
+                  <label className="text-[10px] font-bold uppercase hm-text-muted">
+                    Card name
+                    <input
+                      required
+                      value={cardSettingsDraft.name || ''}
+                      onChange={(event) => setCardSettingsDraft({ ...cardSettingsDraft, name: event.target.value })}
+                      className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                    />
+                  </label>
+                  <label className="text-[10px] font-bold uppercase hm-text-muted">
+                    Credit limit
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      step="any"
+                      value={cardSettingsDraft.creditLimit}
+                      onChange={(event) => setCardSettingsDraft({ ...cardSettingsDraft, creditLimit: event.target.value })}
+                      className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                    />
+                  </label>
+                  <label className="text-[10px] font-bold uppercase hm-text-muted">
+                    Alert cap (%)
+                    <input
+                      required
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={cardSettingsDraft.alertThresholdPct}
+                      onChange={(event) => setCardSettingsDraft({ ...cardSettingsDraft, alertThresholdPct: event.target.value })}
+                      className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                    />
+                  </label>
+                  <label className="text-[10px] font-bold uppercase hm-text-muted">
+                    Bill due date
+                    <CalendarDatePicker
+                      required
+                      value={cardSettingsDraft.billDueDate || ''}
+                      onChange={(value) => setCardSettingsDraft({ ...cardSettingsDraft, billDueDate: value })}
+                      ariaLabel={`${cc.name} credit card due date`}
+                      className="mt-1 w-full"
+                    />
+                  </label>
+                  <label className="text-[10px] font-bold uppercase hm-text-muted">
+                    Pay from bank
+                    <select
+                      required
+                      value={cardSettingsDraft.paymentSourceAccountId || ''}
+                      onChange={(event) => setCardSettingsDraft({ ...cardSettingsDraft, paymentSourceAccountId: event.target.value })}
+                      className="hm-input mt-1 w-full rounded-lg px-2.5 py-2 text-xs normal-case"
+                    >
+                      <option value="" disabled>Select bank</option>
+                      {bankAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>{account.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex gap-2 sm:col-span-2 lg:col-span-5">
+                    <button type="submit" className="rounded-lg hm-btn-primary px-3 py-2 text-xs font-bold cursor-pointer">Save settings</button>
+                    <button type="button" onClick={() => setEditingCardSettingsId(null)} className="rounded-lg border hm-border px-3 py-2 text-xs font-bold cursor-pointer">Cancel</button>
+                  </div>
+                </form>
+              )}
             </div>
           );
         })}
@@ -349,32 +387,6 @@ export default function AccountsView({
         </div>
       </section>
 
-      {/* INSUFFICIENT HDFC BANK BALANCE ALERT DIALOG */}
-      {hdfcShortfallAlert && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-sm rounded-2xl border hm-surface hm-border p-6 space-y-4 shadow-2xl text-xs">
-            <div className="flex items-center gap-2.5 text-rose-500">
-              <AlertTriangle size={22} />
-              <h3 className="text-base font-extrabold">Insufficient HDFC Bank Balance</h3>
-            </div>
-            <p className="hm-text-muted leading-relaxed">
-              Cannot pay the <strong>{hdfcShortfallAlert.cardName}</strong> bill of{' '}
-              <strong className="font-mono-num">{formatINR(hdfcShortfallAlert.billAmount, false, true)}</strong> because your{' '}
-              <strong>HDFC Bank (Salary Account)</strong> only has{' '}
-              <strong className="font-mono-num">{formatINR(hdfcShortfallAlert.hdfcAvailable, false, true)}</strong> available
-              (Shortfall: <strong className="font-mono-num">{formatINR(hdfcShortfallAlert.shortfall, false, true)}</strong>).
-            </p>
-            <button
-              type="button"
-              onClick={() => setHdfcShortfallAlert(null)}
-              className="w-full py-2.5 rounded-xl hm-btn-primary font-extrabold uppercase tracking-wider cursor-pointer"
-            >
-              Understood
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* ADD NEW ACCOUNT MODAL */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
@@ -386,17 +398,27 @@ export default function AccountsView({
                 id: 'acc_' + Date.now(),
                 name: name.trim(),
                 nickname: nickname.trim() || 'Account',
-                brand: type === 'credit' && name.toLowerCase().includes('hdfc') ? 'hdfc_cc' : name.toLowerCase(),
+                brand: name.toLowerCase(),
                 type,
                 openingBalance: 0,
-                creditLimit: type === 'credit' ? 50000 : 0,
-                alertThresholdPct: 10,
-                billDueDay: 5,
+                ...(type === 'credit'
+                  ? {
+                      creditLimit: Number(creditLimit),
+                      alertThresholdPct: Number(alertThresholdPct),
+                      billDueDate,
+                      billDueDay: Number(billDueDate.split('-')[2]),
+                      paymentSourceAccountId
+                    }
+                  : {}),
                 pinnedOnHome: pinnedCount < 4,
                 includeInTotalBank: type === 'bank'
               });
               setName('');
               setNickname('');
+              setCreditLimit('');
+              setAlertThresholdPct('');
+              setBillDueDate('');
+              setPaymentSourceAccountId('');
               setShowAddModal(false);
             }}
             className="w-full max-w-md rounded-2xl border hm-surface hm-border p-6 space-y-4 text-xs shadow-2xl"
@@ -413,7 +435,13 @@ export default function AccountsView({
                 <label className="text-[10px] font-bold uppercase hm-text-muted block mb-1">Type</label>
                 <select
                   value={type}
-                  onChange={(e) => setType(e.target.value)}
+                  onChange={(e) => {
+                    setType(e.target.value);
+                    setCreditLimit('');
+                    setAlertThresholdPct('');
+                    setBillDueDate('');
+                    setPaymentSourceAccountId('');
+                  }}
                   className="hm-input w-full rounded-xl px-3 py-2.5 outline-none"
                 >
                   {ACCOUNT_TYPES.map(t => (
@@ -442,11 +470,71 @@ export default function AccountsView({
                   className="hm-input w-full rounded-xl px-3 py-2.5 outline-none"
                 />
               </div>
+              {type === 'credit' && (
+                <div className="space-y-3 rounded-xl border hm-border p-3">
+                  <p className="font-bold">Credit card settings</p>
+                  <label className="block text-[10px] font-bold uppercase hm-text-muted">
+                    Credit limit
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      step="any"
+                      value={creditLimit}
+                      onChange={(event) => setCreditLimit(event.target.value)}
+                      className="hm-input mt-1 w-full rounded-lg px-3 py-2 text-xs normal-case"
+                    />
+                  </label>
+                  <label className="block text-[10px] font-bold uppercase hm-text-muted">
+                    Alert cap (% of limit; 0 disables alerts)
+                    <input
+                      required
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={alertThresholdPct}
+                      onChange={(event) => setAlertThresholdPct(event.target.value)}
+                      className="hm-input mt-1 w-full rounded-lg px-3 py-2 text-xs normal-case"
+                    />
+                  </label>
+                  <label className="block text-[10px] font-bold uppercase hm-text-muted">
+                    Bill due date
+                    <CalendarDatePicker
+                      required
+                      value={billDueDate}
+                      onChange={setBillDueDate}
+                      ariaLabel="Credit card bill due date"
+                      className="mt-1 w-full"
+                    />
+                  </label>
+                  <label className="block text-[10px] font-bold uppercase hm-text-muted">
+                    Pay bill from
+                    <select
+                      required
+                      value={paymentSourceAccountId}
+                      onChange={(event) => setPaymentSourceAccountId(event.target.value)}
+                      className="hm-input mt-1 w-full rounded-lg px-3 py-2 text-xs normal-case"
+                    >
+                      <option value="" disabled>Select a bank account</option>
+                      {bankAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>{account.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {bankAccounts.length === 0 && (
+                    <p className="text-rose-500">
+                      Add a bank account before adding a credit card.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             <button
               type="submit"
-              className="w-full py-3 rounded-xl hm-btn-primary font-extrabold uppercase tracking-wider cursor-pointer"
+              disabled={type === 'credit' && bankAccounts.length === 0}
+              className="w-full py-3 rounded-xl hm-btn-primary font-extrabold uppercase tracking-wider cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Create Account
             </button>

@@ -5,7 +5,11 @@ import React, {
   useRef,
   useCallback,
 } from "react";
-import { INITIAL_APP_DATA, DEFAULT_ACCOUNTS } from "./data/defaults";
+import {
+  INITIAL_APP_DATA,
+  hasLegacyFinancialPresets,
+  removeLegacyFinancialPresets,
+} from "./data/defaults";
 import {
   computeFinancialState,
   getCurrentMonthKey,
@@ -14,9 +18,11 @@ import {
   formatDateDisplay,
   formatINR,
   triggerWorkableAlert,
-  pullCloudDatabase,
-  pushCloudDatabase,
 } from "./engine/financeEngine";
+import {
+  saveUserData,
+  subscribeToUserData,
+} from "./data/userDataRepository";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import TransactionModal from "./components/TransactionModal";
@@ -27,159 +33,378 @@ import AccountsView from "./views/AccountsView";
 import GoalsView from "./views/GoalsView";
 import ReportsView from "./views/ReportsView";
 import AutopayAlertsView from "./views/AutopayAlertsView";
-import { Lock, BellRing } from "lucide-react";
+import CategoriesView from "./views/CategoriesView";
+import { Lock, BellRing, Plus } from "lucide-react";
 
 const STORAGE_KEY = "hanakasu_manntri_v4";
+const LEGACY_OWNER_UID_KEY = `${STORAGE_KEY}_legacy_owner_uid`;
+const APP_TABS = new Set([
+  "overview",
+  "transactions",
+  "accounts",
+  "categories",
+  "goals",
+  "reports",
+  "autopay",
+  "profile",
+]);
 
-function normalizeAppData(parsed) {
-  const syncedAccounts = (parsed?.accounts || DEFAULT_ACCOUNTS)
-    .filter((a) => a.type !== "liquid_mf")
-    .map((acc) => {
-      if (acc.id === "acc_sbi")
-        return { ...acc, nickname: "Savings Account", brand: "sbi" };
-      if (acc.id === "acc_hdfc")
-        return { ...acc, nickname: "Salary Account", brand: "hdfc" };
-      if (acc.id === "acc_idfc")
-        return { ...acc, nickname: "Side Gig Account", brand: "idfc" };
-      if (acc.id === "acc_union")
-        return { ...acc, nickname: "Primary UPI", brand: "union" };
-      if (acc.id === "acc_cc_hdfc") return { ...acc, brand: "hdfc_cc" };
-      return acc;
-    });
+function getTabFromHash() {
+  const tab = window.location.hash.slice(1);
+  return APP_TABS.has(tab) ? tab : "overview";
+}
 
-  return {
+function getLegacyImportStatus(uid, hasLegacyData, ownerUid) {
+  if (!hasLegacyData || ownerUid === uid) return "hidden";
+  return ownerUid ? "claimed" : "available";
+}
+
+function getSyncErrorMessage(error, action = "sync") {
+  if (error?.code === "permission-denied") {
+    return "Firestore denied access. Publish this project's firestore.rules and confirm the signed-in email is verified. Then sign out and back in.";
+  }
+  if (error?.code === "unauthenticated") {
+    return "Your sign-in expired. Sign out and sign back in to sync.";
+  }
+  if (error?.code === "failed-precondition" || error?.code === "not-found") {
+    return "Cloud Firestore is not available for this Firebase project. Create or enable its Firestore database, then retry.";
+  }
+  if (error?.code === "unavailable" || error?.code === "network-request-failed") {
+    return "Cloud sync is temporarily unavailable. Check your connection and retry.";
+  }
+  return error?.message || `Unable to ${action} your cloud data.`;
+}
+
+function normalizeAppData(parsed, user) {
+  const normalized = removeLegacyFinancialPresets({
     ...INITIAL_APP_DATA,
     ...parsed,
-    accounts: syncedAccounts,
-    profile: { ...INITIAL_APP_DATA.profile, ...(parsed?.profile || {}) },
+  });
+  const emergencyReserve = parsed?.emergencyReserve
+    ? { ...INITIAL_APP_DATA.emergencyReserve, ...parsed.emergencyReserve }
+    : {
+        name: "Emergency Reserve",
+        sourceAccountId: "liquid_mf",
+        amount: computeFinancialState(normalized, getCurrentMonthKey()).liquidMfBalance,
+      };
+
+  return {
+    ...normalized,
+    accounts: normalized.accounts.filter((account) => account.type !== "liquid_mf"),
+    emergencyReserve,
+    profile: {
+      ...INITIAL_APP_DATA.profile,
+      ...(parsed?.profile || {}),
+      email: user.email || "",
+      emailVerified: Boolean(user.emailVerified),
+    },
     settings: { ...INITIAL_APP_DATA.settings, ...(parsed?.settings || {}) },
     lastUpdated: Number(parsed?.lastUpdated) || 0,
   };
 }
 
-export default function App() {
+function createDefaultUserData(user) {
+  const accountName =
+    user.displayName || user.email?.split("@")[0] || "User";
+  return normalizeAppData({
+    ...INITIAL_APP_DATA,
+    profile: {
+      ...INITIAL_APP_DATA.profile,
+      name: accountName,
+      email: user.email || "",
+      emailVerified: Boolean(user.emailVerified),
+    },
+    lastUpdated: 0,
+  }, user);
+}
+
+export default function App({ user, onSignOut }) {
   const [startWithTransactionShortcut] = useState(
     () => new URLSearchParams(window.location.search).get("action") === "new-transaction",
   );
+  const storageKey = `${STORAGE_KEY}:${user.uid}`;
+  const [legacyImportStatus, setLegacyImportStatus] = useState(() => {
+    const hasScopedData = Boolean(localStorage.getItem(storageKey));
+    const hasLegacyData = Boolean(localStorage.getItem(STORAGE_KEY));
+    if (hasScopedData || !hasLegacyData) return "hidden";
+    if (localStorage.getItem(LEGACY_OWNER_UID_KEY)) {
+      return getLegacyImportStatus(
+        user.uid,
+        hasLegacyData,
+        localStorage.getItem(LEGACY_OWNER_UID_KEY),
+      );
+    }
+    return "checking";
+  });
+  const [legacyImportError, setLegacyImportError] = useState("");
   const [data, setData] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
-        return normalizeAppData(JSON.parse(saved));
+        return normalizeAppData(JSON.parse(saved), user);
       } catch {
-        return { ...INITIAL_APP_DATA, lastUpdated: 0 };
+        return createDefaultUserData(user);
       }
     }
-    return { ...INITIAL_APP_DATA, lastUpdated: 0 };
+    return createDefaultUserData(user);
   });
+  const [dataReady, setDataReady] = useState(() =>
+    Boolean(localStorage.getItem(storageKey)),
+  );
 
-  const [syncStatus, setSyncStatus] = useState("idle"); // 'idle' | 'syncing' | 'synced'
-  const initialPullDoneRef = useRef(false);
-  const skipNextPushRef = useRef(false);
+  const [syncStatus, setSyncStatus] = useState("syncing");
+  const [syncError, setSyncError] = useState("");
+  const dataRef = useRef(data);
+  const initialCloudLoadRef = useRef(false);
+  const lastWrittenDataRef = useRef(null);
 
-  // Wrapper around setData that stamps `lastUpdated: Date.now()` on every local user edit
   const updateLocalData = useCallback((updater) => {
     setData((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      const stamped = { ...next, lastUpdated: Date.now() };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(stamped));
+      const stamped = {
+        ...next,
+        profile: {
+          ...next.profile,
+          email: user.email || "",
+          emailVerified: Boolean(user.emailVerified),
+        },
+        lastUpdated: Math.max(Date.now(), Number(prev.lastUpdated || 0) + 1),
+      };
+      dataRef.current = stamped;
       return stamped;
     });
-  }, []);
+  }, [user.email, user.emailVerified]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    dataRef.current = data;
+    if (dataReady && legacyImportStatus !== "available" && legacyImportStatus !== "checking") {
+      localStorage.setItem(storageKey, JSON.stringify(data));
+    }
     document.title = "Hanakasu Mantri";
-  }, [data]);
+  }, [data, dataReady, legacyImportStatus, storageKey]);
 
   const [activeTab, setActiveTab] = useState(() =>
-    startWithTransactionShortcut ? "transactions" : "overview",
+    startWithTransactionShortcut ? "transactions" : getTabFromHash(),
   );
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthKey());
   const [modalOpen, setModalOpen] = useState(() => startWithTransactionShortcut);
+  const [quickEntrySaved, setQuickEntrySaved] = useState(false);
   const [editingTx, setEditingTx] = useState(null);
   const [lastDeletedTx, setLastDeletedTx] = useState(null);
   const [toastAlert, setToastAlert] = useState(null);
   const undoTimerRef = useRef(null);
+  const toastTimerRef = useRef(null);
 
   const [unlocked, setUnlocked] = useState(() => !data.settings?.pinCode);
   const [pinInput, setPinInput] = useState("");
 
+  const navigateToTab = useCallback((tab) => {
+    if (!APP_TABS.has(tab) || tab === activeTab) return;
+    const url = new URL(window.location.href);
+    url.hash = tab;
+    window.history.pushState({ tab }, "", url);
+    setActiveTab(tab);
+  }, [activeTab]);
+
+  const addModalHistoryEntry = () => {
+    if (window.history.state?.transactionModal) return;
+    window.history.pushState(
+      { ...(window.history.state || {}), transactionModal: true },
+      "",
+      window.location.href,
+    );
+  };
+
+  const openTransactionModal = (transaction = null) => {
+    setEditingTx(transaction);
+    setModalOpen(true);
+    addModalHistoryEntry();
+  };
+
+  const closeTransactionModal = () => {
+    if (window.history.state?.transactionModal) {
+      window.history.back();
+      return;
+    }
+    setModalOpen(false);
+    setEditingTx(null);
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (window.history.state?.transactionModal) {
+        setModalOpen(true);
+      } else {
+        setActiveTab(getTabFromHash());
+        setModalOpen(false);
+        setEditingTx(null);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const theme = data.settings?.theme || "dark";
+
+  const showConfirmation = (message) => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    setToastAlert(message);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastAlert(null);
+      toastTimerRef.current = null;
+    }, 2600);
+  };
 
   const finState = useMemo(
     () => computeFinancialState(data, selectedMonth),
     [data, selectedMonth],
   );
 
-  useEffect(() => {
-    if (!startWithTransactionShortcut) return;
-    const url = new URL(window.location.href);
-    url.searchParams.delete("action");
-    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [startWithTransactionShortcut]);
+  const saveSnapshot = useCallback(async (snapshot, force = false) => {
+    const canonicalSnapshot = normalizeAppData(snapshot, user);
+    const serialized = JSON.stringify(canonicalSnapshot);
+    if (!force && serialized === lastWrittenDataRef.current) return true;
 
-  // 1. PULL FROM CLOUD ON INITIAL LOAD & WHEN SWITCHING DEVICES / REFOCUSING TAB
-  const syncFromCloudNow = useCallback(async () => {
     setSyncStatus("syncing");
-    const cloudData = await pullCloudDatabase();
-
-    if (cloudData) {
-      const normalizedCloud = normalizeAppData(cloudData);
-      setData((currentLocal) => {
-        const localTime = Number(currentLocal.lastUpdated) || 0;
-        const cloudTime = Number(normalizedCloud.lastUpdated) || 0;
-
-        // If Cloud has newer data (or this is a fresh device at 0), adopt Cloud data!
-        if (cloudTime > localTime) {
-          skipNextPushRef.current = true;
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedCloud));
-          return normalizedCloud;
-        }
-        return currentLocal;
-      });
-    }
-
-    initialPullDoneRef.current = true;
-    setSyncStatus("synced");
-  }, []);
-
-  useEffect(() => {
-    const initialSyncTimer = window.setTimeout(() => {
-      void syncFromCloudNow();
-    }, 0);
-    const handleFocus = () => syncFromCloudNow();
-    window.addEventListener("focus", handleFocus);
-    return () => {
-      window.clearTimeout(initialSyncTimer);
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [syncFromCloudNow]);
-
-  // 2. AUTO-PUSH TO CLOUD WHENEVER USER MODIFIES DATA
-  useEffect(() => {
-    if (!initialPullDoneRef.current) return;
-    if (skipNextPushRef.current) {
-      skipNextPushRef.current = false;
-      return;
-    }
-    if (!data.lastUpdated) return;
-
-    const timer = setTimeout(async () => {
-      setSyncStatus("syncing");
-      await pushCloudDatabase(data, finState.ccAlerts);
+    setSyncError("");
+    try {
+      await saveUserData(user.uid, canonicalSnapshot);
+      lastWrittenDataRef.current = serialized;
       setSyncStatus("synced");
+      return true;
+    } catch (error) {
+      setSyncStatus("error");
+      setSyncError(getSyncErrorMessage(error));
+      return false;
+    }
+  }, [user]);
+
+  useEffect(() => {
+    initialCloudLoadRef.current = false;
+    const unsubscribe = subscribeToUserData(
+      user.uid,
+      (remoteValue) => {
+        const remoteData = remoteValue ? normalizeAppData(remoteValue, user) : null;
+        const remoteEmailChanged =
+          remoteValue &&
+          (remoteValue.profile?.email !== (user.email || "") ||
+            remoteValue.profile?.emailVerified !== Boolean(user.emailVerified));
+        const remoteNeedsCanonicalSave =
+          remoteValue &&
+          (hasLegacyFinancialPresets(remoteValue) ||
+            !remoteValue.emergencyReserve ||
+            remoteEmailChanged);
+        const localData = dataRef.current;
+
+        if (!initialCloudLoadRef.current) {
+          initialCloudLoadRef.current = true;
+          if (remoteData) {
+            setDataReady(true);
+            const claimedBy = localStorage.getItem(LEGACY_OWNER_UID_KEY);
+            const hasLegacyData = Boolean(localStorage.getItem(STORAGE_KEY));
+            setLegacyImportStatus(
+              getLegacyImportStatus(user.uid, hasLegacyData, claimedBy),
+            );
+            if (Number(remoteData.lastUpdated) >= Number(localData.lastUpdated)) {
+              const serialized = JSON.stringify(remoteData);
+              lastWrittenDataRef.current = serialized;
+              if (serialized !== JSON.stringify(localData)) {
+                dataRef.current = remoteData;
+                setData(remoteData);
+              }
+              setSyncStatus("synced");
+              if (remoteEmailChanged || remoteNeedsCanonicalSave) {
+                void saveSnapshot(remoteData, true);
+              }
+            } else {
+              lastWrittenDataRef.current = null;
+              void saveSnapshot(localData);
+            }
+            return;
+          }
+
+          if (Number(localData.lastUpdated) > 0) {
+            setDataReady(true);
+            setLegacyImportStatus("hidden");
+            void saveSnapshot(localData);
+            return;
+          }
+
+          const claimedBy = localStorage.getItem(LEGACY_OWNER_UID_KEY);
+          const hasLegacyData = Boolean(localStorage.getItem(STORAGE_KEY));
+          setLegacyImportStatus(
+            getLegacyImportStatus(user.uid, hasLegacyData, claimedBy),
+          );
+          setDataReady(true);
+          const seededData = {
+            ...localData,
+            lastUpdated: Date.now(),
+          };
+          dataRef.current = seededData;
+          setData(seededData);
+          return;
+        }
+
+        if (
+          remoteData &&
+          (Number(remoteData.lastUpdated) > Number(dataRef.current.lastUpdated) ||
+            remoteNeedsCanonicalSave)
+        ) {
+          const serialized = JSON.stringify(remoteData);
+          lastWrittenDataRef.current = serialized;
+          dataRef.current = remoteData;
+          setData(remoteData);
+          setSyncStatus("synced");
+          if (remoteEmailChanged || remoteNeedsCanonicalSave) {
+            void saveSnapshot(remoteData, true);
+          }
+        }
+      },
+      (error) => {
+        initialCloudLoadRef.current = true;
+        setDataReady(true);
+        const claimedBy = localStorage.getItem(LEGACY_OWNER_UID_KEY);
+        const hasLegacyData = Boolean(localStorage.getItem(STORAGE_KEY));
+        setLegacyImportStatus(
+          getLegacyImportStatus(user.uid, hasLegacyData, claimedBy),
+        );
+        setSyncStatus("error");
+        setSyncError(getSyncErrorMessage(error, "load"));
+      },
+    );
+
+    return unsubscribe;
+  }, [user, storageKey, saveSnapshot]);
+
+  useEffect(() => {
+    if (
+      !initialCloudLoadRef.current ||
+      legacyImportStatus === "available" ||
+      legacyImportStatus === "checking"
+    ) return;
+    const serialized = JSON.stringify(data);
+    if (serialized === lastWrittenDataRef.current) return;
+    const timer = window.setTimeout(() => {
+      void saveSnapshot(data);
     }, 900);
+    return () => window.clearTimeout(timer);
+  }, [data, legacyImportStatus, saveSnapshot]);
 
-    return () => clearTimeout(timer);
-  }, [data, finState.ccAlerts]);
-
-  const dispatchAlert = useCallback((message, badge = "PRIVATE LEDGER DISPATCH") => {
-    const contact = data.profile?.email || "Local Alert Console";
+  const dispatchAlert = useCallback(async (message, badge = "PRIVATE LEDGER DISPATCH") => {
+    const contact = data.profile?.email || "No profile email";
+    const delivery = await triggerWorkableAlert({
+      subject: `Hanakasu Mantri — ${badge}`,
+      message,
+      profile: data.profile,
+      theme,
+      badge,
+    });
     const newLog = {
       id: "log_" + Date.now(),
-      channel: `Email Dispatch → ${contact}`,
-      message,
+      channel: `${delivery.accepted ? "Email service accepted" : "Email request failed"} → ${contact}`,
+      message: delivery.accepted
+        ? `${message} Inbox delivery is not confirmed.`
+        : `${message} ${delivery.error}`,
       time: new Date().toLocaleTimeString("en-IN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -189,16 +414,12 @@ export default function App() {
       ...prev,
       alertLogs: [newLog, ...(prev.alertLogs || [])],
     }));
-    setToastAlert(message);
+    setToastAlert(
+      delivery.accepted
+        ? `Email service accepted the request for ${contact}. Inbox delivery is not confirmed.`
+        : `Email request failed: ${delivery.error}`,
+    );
     setTimeout(() => setToastAlert(null), 4500);
-
-    triggerWorkableAlert({
-      subject: `Hanakasu Mantri — ${badge}`,
-      message,
-      profile: data.profile,
-      theme,
-      badge,
-    });
   }, [data.profile, theme, updateLocalData]);
 
   useEffect(() => {
@@ -231,7 +452,12 @@ export default function App() {
 
   // Automatic Execution of Fixed Autopay Rules (SIP / EMI / Insurance / Subscription) When Due Date Arrives
   useEffect(() => {
-    if (!initialPullDoneRef.current) return;
+    if (
+      !initialCloudLoadRef.current ||
+      !dataReady ||
+      syncStatus === "syncing" ||
+      syncStatus === "error"
+    ) return;
     const todayISO = getTodayISO();
     const dueRules = (data.autopayRules || []).filter(
       (r) => Number(r.amount) > 0 && r.deductDate && r.deductDate <= todayISO,
@@ -245,9 +471,15 @@ export default function App() {
         rule.deductDate,
         rule.frequency,
       );
-      const validAccId = data.accounts.some((a) => a.id === rule.accountId)
+      const fallbackAccountId = data.accounts.find(
+        (account) => account.type !== "credit",
+      )?.id;
+      const validAccId = data.accounts.some(
+        (account) => account.id === rule.accountId && account.type !== "credit",
+      )
         ? rule.accountId
-        : "acc_sbi";
+        : fallbackAccountId;
+      if (!validAccId) return;
 
       const autoTx = {
         id:
@@ -291,7 +523,7 @@ export default function App() {
         "AUTOMATIC STANDING INSTRUCTION",
       );
     });
-  }, [data.autopayRules, data.accounts, dispatchAlert, updateLocalData]);
+  }, [data.autopayRules, data.accounts, dataReady, syncStatus, dispatchAlert, updateLocalData]);
 
   const handleSaveTransaction = (txObj) => {
     const timestamp = Date.now();
@@ -301,12 +533,38 @@ export default function App() {
       createdAt: txObj.createdAt || timestamp,
     };
     updateLocalData((prev) => {
-      const exists = prev.transactions.some((t) => t.id === transaction.id);
-      const updated = exists
+      const previousTransaction = prev.transactions.find((t) => t.id === transaction.id);
+      const updated = previousTransaction
         ? prev.transactions.map((t) => (t.id === transaction.id ? transaction : t))
         : [transaction, ...prev.transactions];
-      return { ...prev, transactions: updated };
+      const reserveDelta =
+        (transaction.isEmergencyReserveContribution ? Number(transaction.amount) || 0 : 0) -
+        (previousTransaction?.isEmergencyReserveContribution
+          ? Number(previousTransaction.amount) || 0
+          : 0);
+      return {
+        ...prev,
+        transactions: updated,
+        ...(reserveDelta
+          ? {
+              emergencyReserve: {
+                ...prev.emergencyReserve,
+                amount: Math.max(
+                  0,
+                  Number((Number(prev.emergencyReserve?.amount || 0) + reserveDelta).toFixed(2)),
+                ),
+              },
+            }
+          : {}),
+      };
     });
+    showConfirmation(
+      txObj.id
+        ? "Transaction updated."
+        : transaction.type === "transfer"
+          ? "Transfer saved."
+          : "Transaction saved.",
+    );
 
     const targetAcc = finState.computedAccounts.find(
       (a) => a.id === transaction.accountId,
@@ -314,12 +572,12 @@ export default function App() {
     if (targetAcc?.type === "credit" && transaction.type === "expense") {
       const newUsed = targetAcc.currentBalance + transaction.amount;
       const threshold =
-        ((targetAcc.creditLimit || 50000) *
-          (targetAcc.alertThresholdPct || 10)) /
+        ((Number(targetAcc.creditLimit) || 0) *
+          (Number(targetAcc.alertThresholdPct) || 0)) /
         100;
-      if (newUsed >= threshold) {
+      if (threshold > 0 && newUsed >= threshold) {
         dispatchAlert(
-          `${targetAcc.name} outstanding balance has reached ${formatINR(newUsed)}, crossing your 10% utilization threshold of ${formatINR(threshold)}.`,
+          `${targetAcc.name} outstanding balance has reached ${formatINR(newUsed)}, crossing your ${targetAcc.alertThresholdPct}% utilization threshold of ${formatINR(threshold)}.`,
           "CREDIT UTILIZATION GUARD",
         );
       }
@@ -351,6 +609,17 @@ export default function App() {
     updateLocalData((prev) => ({
       ...prev,
       transactions: prev.transactions.filter((t) => t.id !== id),
+      ...(target.isEmergencyReserveContribution
+        ? {
+            emergencyReserve: {
+              ...prev.emergencyReserve,
+              amount: Math.max(
+                0,
+                Number((Number(prev.emergencyReserve?.amount || 0) - Number(target.amount || 0)).toFixed(2)),
+              ),
+            },
+          }
+        : {}),
     }));
 
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
@@ -365,14 +634,36 @@ export default function App() {
     updateLocalData((prev) => ({
       ...prev,
       transactions: [lastDeletedTx, ...prev.transactions],
+      ...(lastDeletedTx.isEmergencyReserveContribution
+        ? {
+            emergencyReserve: {
+              ...prev.emergencyReserve,
+              amount: Number(
+                (Number(prev.emergencyReserve?.amount || 0) + Number(lastDeletedTx.amount || 0)).toFixed(2),
+              ),
+            },
+          }
+        : {}),
     }));
     setLastDeletedTx(null);
   };
 
-  const handlePayCreditCardFromHdfc = (ccAccount) => {
+  const handlePayCreditCard = (ccAccount) => {
     const dueAmount = Math.max(0, Number(ccAccount.used) || 0);
     if (dueAmount <= 0) return;
-    if (finState.hdfcBankBalance < dueAmount) return;
+    const sourceAccount = finState.computedAccounts.find(
+      (account) => account.id === ccAccount.paymentSourceAccountId && account.type === "bank",
+    );
+    if (!sourceAccount) {
+      alert(`Choose a bank account for paying ${ccAccount.name}'s bill first.`);
+      return;
+    }
+    if (sourceAccount.currentBalance < dueAmount) {
+      alert(
+        `Insufficient balance in ${sourceAccount.name}. Available: ${formatINR(sourceAccount.currentBalance)}; bill: ${formatINR(dueAmount)}.`,
+      );
+      return;
+    }
 
     const paymentTx = {
       id: "tx_ccbill_" + Date.now(),
@@ -384,12 +675,12 @@ export default function App() {
         minute: "2-digit",
         hour12: true,
       }),
-      accountId: "acc_hdfc",
+      accountId: sourceAccount.id,
       toAccountId: ccAccount.id,
       categoryId: "cat_bills",
       subcategory: "Credit Card Bill",
       paymentMethod: "Net Banking",
-      description: `Paid ${ccAccount.name} Bill from HDFC Bank`,
+      description: `Paid ${ccAccount.name} bill from ${sourceAccount.name}`,
       createdAt: Date.now(),
     };
 
@@ -399,7 +690,7 @@ export default function App() {
     }));
 
     dispatchAlert(
-      `Credit Card Bill Settled: ${formatINR(dueAmount, false, true)} has been deducted from your HDFC Bank Salary Account. ${ccAccount.name} due is now ₹0.`,
+      `Credit Card Bill Settled: ${formatINR(dueAmount, false, true)} has been deducted from ${sourceAccount.name}. ${ccAccount.name} due is now ₹0.`,
       "CREDIT CARD SETTLEMENT",
     );
   };
@@ -431,6 +722,91 @@ export default function App() {
         ((Number(prev.liquidMfOpeningBalance) || 0) + diff).toFixed(2),
       ),
     }));
+  };
+
+  const handleUpdateEmergencyReserve = (reserve) => {
+    const amount = Number(reserve.amount);
+    if (!reserve.name?.trim() || !Number.isFinite(amount) || amount < 0) {
+      alert("Enter a reserve name and a valid non-negative amount.");
+      return false;
+    }
+
+    const sourceBalance =
+      reserve.sourceAccountId === "liquid_mf"
+        ? finState.liquidMfGrossBalance
+        : finState.computedAccounts.find(
+            (account) =>
+              account.id === reserve.sourceAccountId && account.type === "bank",
+          )?.grossBalance;
+    if (sourceBalance === undefined || amount > sourceBalance) {
+      alert("The reserve cannot exceed the balance in its selected source.");
+      return false;
+    }
+
+    updateLocalData((prev) => ({
+      ...prev,
+      emergencyReserve: {
+        name: reserve.name.trim(),
+        sourceAccountId: reserve.sourceAccountId,
+        amount,
+      },
+    }));
+    showConfirmation("Reserve settings saved.");
+    return true;
+  };
+
+  const handleWithdrawEmergencyReserve = (amount, targetAccountId) => {
+    const withdrawal = Number(amount);
+    const targetAccount = finState.computedAccounts.find(
+      (account) => account.id === targetAccountId && account.type === "bank",
+    );
+    if (
+      !Number.isFinite(withdrawal) ||
+      withdrawal <= 0 ||
+      withdrawal > finState.emergencyReserveBalance ||
+      !targetAccount
+    ) {
+      alert("Enter a valid withdrawal amount and destination bank account.");
+      return false;
+    }
+
+    const sourceAccountId = data.emergencyReserve.sourceAccountId;
+    const transaction =
+      sourceAccountId === targetAccountId
+        ? null
+        : {
+            id: `tx_reserve_${Date.now()}`,
+            type: "transfer",
+            amount: withdrawal,
+            date: getTodayISO(),
+            time: new Date().toLocaleTimeString("en-IN", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            }),
+            accountId: sourceAccountId,
+            toAccountId: targetAccountId,
+            categoryId: "cat_other",
+            subcategory: "Emergency Reserve Withdrawal",
+            paymentMethod: "Net Banking",
+            description: `Released ${data.emergencyReserve.name} to ${targetAccount.name}`,
+            createdAt: Date.now(),
+          };
+
+    updateLocalData((prev) => ({
+      ...prev,
+      emergencyReserve: {
+        ...prev.emergencyReserve,
+        amount: Number(
+          Math.max(0, Number(prev.emergencyReserve.amount) - withdrawal).toFixed(2),
+        ),
+      },
+      transactions: transaction
+        ? [transaction, ...prev.transactions]
+        : prev.transactions,
+    }));
+    showConfirmation("Emergency reserve withdrawn.");
+    return true;
   };
 
   const handleTogglePinHome = (accId) => {
@@ -469,7 +845,7 @@ export default function App() {
       amount: rule.amount,
       date: getTodayISO(),
       time: "09:00 am",
-      accountId: rule.accountId || "acc_sbi",
+      accountId: rule.accountId,
       categoryId: isSip ? "investment" : "cat_bills",
       subcategory: rule.category,
       paymentMethod: "Auto-Debit",
@@ -504,6 +880,220 @@ export default function App() {
     finState.ccAlerts.filter((c) => c.isExceeded).length +
     (finState.isOverBudgetLimit ? 1 : 0) +
     (data.manualAlerts || []).length;
+
+  const openQuickAdd = () => {
+    openTransactionModal();
+  };
+
+  const addSubcategory = (categoryId, subcategory) =>
+    updateLocalData((prev) => ({
+      ...prev,
+      categories: prev.categories.map((category) =>
+        category.id === categoryId
+          ? {
+              ...category,
+              subcategories: [...(category.subcategories || []), subcategory],
+            }
+          : category,
+      ),
+    }));
+
+  const handleImportLegacyData = () => {
+    setLegacyImportError("");
+    const claimedBy = localStorage.getItem(LEGACY_OWNER_UID_KEY);
+    if (claimedBy && claimedBy !== user.uid) {
+      setLegacyImportStatus("claimed");
+      return;
+    }
+
+    const legacyJson = localStorage.getItem(STORAGE_KEY);
+    if (!legacyJson) {
+      setLegacyImportStatus("hidden");
+      return;
+    }
+    if (
+      !window.confirm(
+        "Import this device's old finance data into your signed-in account? This replaces that account's current data. Only continue if you own the old data, and export a backup first.",
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const importedData = normalizeAppData(JSON.parse(legacyJson), user);
+      localStorage.setItem(LEGACY_OWNER_UID_KEY, user.uid);
+      updateLocalData(importedData);
+      setLegacyImportStatus("hidden");
+    } catch (error) {
+      setLegacyImportError(
+        `Legacy data could not be imported: ${error.message}`,
+      );
+    }
+  };
+
+  const handleStartFresh = () => {
+    setLegacyImportError("");
+    try {
+      if (legacyImportStatus === "available") {
+        localStorage.setItem(LEGACY_OWNER_UID_KEY, user.uid);
+      }
+    } catch (error) {
+      setLegacyImportError(
+        `This browser could not save the import choice: ${error.message}`,
+      );
+      return;
+    }
+    setLegacyImportStatus("hidden");
+  };
+
+  const handleManualSync = () => {
+    void saveSnapshot(dataRef.current, true);
+  };
+
+  const handleSignOut = async () => {
+    if (Number(dataRef.current.lastUpdated) > 0) {
+      if (!initialCloudLoadRef.current) {
+        if (
+          !window.confirm(
+            "Your cloud data has not finished loading. Sign out anyway? Any changes made now will remain only in this browser.",
+          )
+        ) {
+          return;
+        }
+      } else if (
+        !(await saveSnapshot(dataRef.current, true)) &&
+        !window.confirm(
+          "The latest changes could not be synced. They remain only in this browser.",
+        )
+      ) {
+        return;
+      }
+    }
+    try {
+      await onSignOut();
+    } catch (error) {
+      setSyncError(error.message || "Unable to sign out.");
+    }
+  };
+
+  if (!dataReady) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
+        <p className="text-sm font-semibold hm-text-muted">
+          Loading your private account data…
+        </p>
+      </div>
+    );
+  }
+
+  if (legacyImportStatus === "checking") {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
+        <p className="text-sm font-semibold hm-text-muted">
+          Checking this device for old data…
+        </p>
+      </div>
+    );
+  }
+
+  if (legacyImportStatus === "available" || legacyImportStatus === "claimed") {
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
+        <section className="hm-surface hm-border w-full max-w-lg space-y-4 rounded-2xl border p-6">
+          <h1 className="text-lg font-extrabold">
+            {legacyImportStatus === "available"
+              ? "Old device data found"
+              : "Start your private account"}
+          </h1>
+          <p className="text-sm hm-text-muted">
+            {legacyImportStatus === "available"
+              ? "Old data is not shared with your new account automatically. Import only if it belongs to you; otherwise continue without importing."
+              : "Legacy device data was already assigned to another account in this browser. You can restore a personal backup after continuing."}
+          </p>
+          {legacyImportError && (
+            <p className="text-sm font-semibold text-rose-500">
+              {legacyImportError}
+            </p>
+          )}
+          {legacyImportStatus === "available" && (
+            <button
+              type="button"
+              onClick={handleImportLegacyData}
+              className="hm-btn-primary w-full rounded-xl py-2.5 text-sm font-bold"
+            >
+              Import old data into this account
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleStartFresh}
+            className="w-full rounded-xl border hm-border py-2.5 text-sm font-bold"
+          >
+            Continue without importing
+          </button>
+        </section>
+      </div>
+    );
+  }
+
+  if (startWithTransactionShortcut) {
+    return (
+      <div
+        className={`min-h-screen ${theme === "dark" ? "theme-dark" : "theme-light"}`}
+      >
+        <div className="mx-auto max-w-lg px-4 pt-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted">
+                Hanakasu Mantri
+              </span>
+              <h1 className="text-base font-extrabold">Quick transaction</h1>
+            </div>
+            <button
+              type="button"
+              onClick={() => window.location.replace("/")}
+              className="text-xs font-bold hm-text-muted cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] hm-text-muted">
+            Quick entry is available while the rest of the app remains locked.
+          </p>
+        </div>
+        {modalOpen ? (
+          <TransactionModal
+            key="quick-transaction"
+            isOpen
+            onClose={() => setModalOpen(false)}
+            onSave={(transaction) => {
+              handleSaveTransaction(transaction);
+              setQuickEntrySaved(true);
+            }}
+            onAddSubcategory={addSubcategory}
+            computedAccounts={finState.computedAccounts}
+            emergencyReserve={data.emergencyReserve}
+            emergencyReserveBalance={finState.emergencyReserveBalance}
+            categories={data.categories}
+            showAccountBalances={false}
+          />
+        ) : (
+          <div className="mx-auto mt-8 max-w-lg px-4">
+            <div className="hm-surface hm-border rounded-2xl border p-5 text-sm font-semibold">
+              {quickEntrySaved ? "Transaction saved." : "Quick entry closed."}
+              <button
+                type="button"
+                onClick={() => window.location.replace("/")}
+                className="hm-btn-primary mt-4 block rounded-xl px-4 py-2 text-xs font-bold cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (!unlocked && data.settings?.pinCode) {
     return (
@@ -548,11 +1138,8 @@ export default function App() {
 
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        onOpenQuickAdd={() => {
-          setEditingTx(null);
-          setModalOpen(true);
-        }}
+        setActiveTab={navigateToTab}
+        onOpenQuickAdd={openQuickAdd}
         alertCount={totalActiveAlerts}
       />
 
@@ -583,15 +1170,29 @@ export default function App() {
           profile={data.profile}
           alertCount={totalActiveAlerts}
           syncStatus={syncStatus}
-          onManualCloudSync={syncFromCloudNow}
-          onOpenQuickAdd={() => {
-            setEditingTx(null);
-            setModalOpen(true);
-          }}
-          onNavigate={setActiveTab}
+          syncError={syncError}
+          onManualCloudSync={handleManualSync}
+          onSignOut={handleSignOut}
+          onOpenQuickAdd={openQuickAdd}
+          onNavigate={navigateToTab}
         />
 
         <main className="max-w-6xl w-full mx-auto px-4 sm:px-8 pt-8">
+          {syncStatus === "error" && (
+            <div
+              role="alert"
+              className="mb-5 flex flex-col gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm sm:flex-row sm:items-center sm:justify-between"
+            >
+              <span>{syncError}</span>
+              <button
+                type="button"
+                onClick={handleManualSync}
+                className="hm-btn-primary w-fit rounded-lg px-3 py-2 text-xs font-bold cursor-pointer"
+              >
+                Retry sync
+              </button>
+            </div>
+          )}
           {activeTab === "overview" && (
             <OverviewView
               finState={finState}
@@ -616,7 +1217,23 @@ export default function App() {
                   settings: { ...prev.settings, monthlySpendLimit: newLimit },
                 }))
               }
-              onNavigate={setActiveTab}
+              onToggleSavedInstrument={(instrumentId) =>
+                updateLocalData((prev) => {
+                  const excluded = new Set(
+                    prev.settings.homeSavingsExcludedInstrumentIds || [],
+                  );
+                  if (excluded.has(instrumentId)) excluded.delete(instrumentId);
+                  else excluded.add(instrumentId);
+                  return {
+                    ...prev,
+                    settings: {
+                      ...prev.settings,
+                      homeSavingsExcludedInstrumentIds: [...excluded],
+                    },
+                  };
+                })
+              }
+              onNavigate={navigateToTab}
             />
           )}
 
@@ -625,13 +1242,9 @@ export default function App() {
               data={data}
               hideBalances={data.settings.hideBalances}
               onOpenQuickAdd={() => {
-                setEditingTx(null);
-                setModalOpen(true);
+                openQuickAdd();
               }}
-              onEditTx={(tx) => {
-                setEditingTx(tx);
-                setModalOpen(true);
-              }}
+              onEditTx={(tx) => openTransactionModal(tx)}
               onUpdateTxDirect={handleSaveTransaction}
               onDeleteTx={handleDeleteTransaction}
               onCreateManualAlert={(tx) => {
@@ -662,7 +1275,7 @@ export default function App() {
               finState={finState}
               hideBalances={data.settings.hideBalances}
               onAlterBalance={handleAlterBalance}
-              onPayCreditCardFromHdfc={handlePayCreditCardFromHdfc}
+              onPayCreditCard={handlePayCreditCard}
               onTogglePinHome={handleTogglePinHome}
               onUpdateAccountMeta={(id, chg) =>
                 updateLocalData((prev) => ({
@@ -687,6 +1300,14 @@ export default function App() {
             />
           )}
 
+          {activeTab === "categories" && (
+            <CategoriesView
+              data={data}
+              selectedMonth={selectedMonth}
+              hideBalances={data.settings.hideBalances}
+            />
+          )}
+
           {activeTab === "goals" && (
             <GoalsView
               data={data}
@@ -706,8 +1327,15 @@ export default function App() {
                   ),
                 }))
               }
-              onContributeGoalFromSbi={(id, amt) => {
+              onContributeGoal={(id, amt, accountId) => {
                 const targetGoal = data.goals.find((g) => g.id === id);
+                const sourceAccount = finState.computedAccounts.find(
+                  (account) => account.id === accountId && account.isLiquid,
+                );
+                if (!sourceAccount || amt > sourceAccount.currentBalance) {
+                  alert("Choose an account with enough available balance.");
+                  return;
+                }
                 const newTx = {
                   id: "tx_goal_" + Date.now(),
                   type: "goal_contrib",
@@ -718,7 +1346,7 @@ export default function App() {
                     minute: "2-digit",
                     hour12: true,
                   }),
-                  accountId: "acc_sbi",
+                  accountId: sourceAccount.id,
                   categoryId: "cat_other",
                   subcategory: "Goal Contribution",
                   description: `Goal: ${targetGoal?.name || "Reserve"}`,
@@ -750,6 +1378,8 @@ export default function App() {
               hideBalances={data.settings.hideBalances}
               onAlterBalance={handleAlterBalance}
               onAlterLiquidMf={handleAlterLiquidMf}
+              onUpdateEmergencyReserve={handleUpdateEmergencyReserve}
+              onWithdrawEmergencyReserve={handleWithdrawEmergencyReserve}
               onAddInvestment={(inv) =>
                 updateLocalData((prev) => ({
                   ...prev,
@@ -858,7 +1488,7 @@ export default function App() {
                 };
                 reader.readAsText(file);
               }}
-              onResetAll={() => updateLocalData(INITIAL_APP_DATA)}
+              onResetAll={() => updateLocalData(createDefaultUserData(user))}
             />
           )}
         </main>
@@ -867,26 +1497,26 @@ export default function App() {
       <TransactionModal
         key={modalOpen ? editingTx?.id || "new-transaction" : "closed"}
         isOpen={modalOpen}
-        onClose={() => {
-          setModalOpen(false);
-          setEditingTx(null);
-        }}
+        onClose={closeTransactionModal}
         onSave={handleSaveTransaction}
-        onAddSubcategory={(catId, newSub) =>
-          updateLocalData((prev) => ({
-            ...prev,
-            categories: prev.categories.map((c) =>
-              c.id === catId
-                ? { ...c, subcategories: [...(c.subcategories || []), newSub] }
-                : c,
-            ),
-          }))
-        }
+        onAddSubcategory={addSubcategory}
         computedAccounts={finState.computedAccounts}
-        liquidMfBalance={finState.liquidMfBalance}
+        emergencyReserve={data.emergencyReserve}
+        emergencyReserveBalance={finState.emergencyReserveBalance}
         categories={data.categories}
         editingTx={editingTx}
       />
+      {activeTab === "overview" && (
+        <button
+          type="button"
+          onClick={openQuickAdd}
+          aria-label="New transaction"
+          title="New transaction"
+          className="fixed bottom-24 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full hm-btn-primary shadow-xl transition hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current lg:bottom-8 lg:right-8"
+        >
+          <Plus size={24} strokeWidth={2.5} />
+        </button>
+      )}
     </div>
   );
 }

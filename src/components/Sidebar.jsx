@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
-  LayoutGrid, ArrowLeftRight, Landmark, Target,
-  Briefcase, BellRing, UserCheck, Plus
+  LayoutGrid, ArrowLeftRight, Landmark, Target, PieChart,
+  Briefcase, BellRing, UserCheck, Plus, Menu, X
 } from 'lucide-react';
 
 export function BrandLogo({ brand, name = '', size = 28 }) {
@@ -136,11 +136,13 @@ const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: LayoutGrid },
   { id: 'transactions', label: 'Ledger', icon: ArrowLeftRight },
   { id: 'accounts', label: 'Accounts', icon: Landmark },
+  { id: 'categories', label: 'Categories', icon: PieChart },
   { id: 'reports', label: 'Wealth', icon: Briefcase },
   { id: 'goals', label: 'Goals', icon: Target },
   { id: 'autopay', label: 'Autopay', icon: BellRing },
   { id: 'profile', label: 'Profile', icon: UserCheck },
 ];
+const MOBILE_PRIMARY_IDS = new Set(['overview', 'transactions', 'categories', 'reports']);
 
 export default function Sidebar({
   activeTab,
@@ -148,6 +150,10 @@ export default function Sidebar({
   onOpenQuickAdd,
   alertCount
 }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const mobilePrimaryItems = NAV_ITEMS.filter(item => MOBILE_PRIMARY_IDS.has(item.id));
+  const mobileMoreItems = NAV_ITEMS.filter(item => !MOBILE_PRIMARY_IDS.has(item.id));
+
   return (
     <>
       <aside className="hidden lg:flex flex-col justify-between w-60 h-screen sticky top-0 shrink-0 border-r hm-surface hm-border px-5 py-7 select-none overflow-y-auto">
@@ -217,15 +223,51 @@ export default function Sidebar({
       </aside>
 
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-30 border-t hm-surface hm-border backdrop-blur-xl">
-        <div className="max-w-md mx-auto px-1 py-1.5 grid grid-cols-6 items-center">
-          {NAV_ITEMS.slice(0, 6).map(item => {
+        {moreOpen && (
+          <div
+            role="menu"
+            aria-label="More navigation options"
+            className="absolute bottom-full right-2 mb-2 w-52 rounded-2xl border hm-surface hm-border p-2 shadow-2xl"
+          >
+            {mobileMoreItems.map(item => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setMoreOpen(false);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-semibold ${
+                    activeTab === item.id ? 'hm-btn-primary font-bold' : 'hm-text-muted'
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    <Icon size={16} />
+                    {item.label}
+                  </span>
+                  {item.id === 'autopay' && alertCount > 0 && (
+                    <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-black text-white">
+                      {alertCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="mx-auto grid max-w-md grid-cols-5 items-center px-1 py-1.5">
+          {mobilePrimaryItems.map(item => {
             const Icon = item.icon;
             const active = activeTab === item.id;
             return (
               <button
                 key={item.id}
+                type="button"
                 onClick={() => setActiveTab(item.id)}
-                className={`relative flex flex-col items-center justify-center py-1 rounded-lg transition cursor-pointer ${
+                className={`relative flex min-w-0 flex-col items-center justify-center py-1 rounded-lg transition cursor-pointer ${
                   active ? 'font-extrabold' : 'hm-text-muted'
                 }`}
               >
@@ -236,6 +278,20 @@ export default function Sidebar({
               </button>
             );
           })}
+          <button
+            type="button"
+            aria-expanded={moreOpen}
+            aria-haspopup="menu"
+            onClick={() => setMoreOpen(open => !open)}
+            className={`flex min-w-0 flex-col items-center justify-center py-1 rounded-lg transition cursor-pointer ${
+              moreOpen || mobileMoreItems.some(item => item.id === activeTab)
+                ? 'font-extrabold'
+                : 'hm-text-muted'
+            }`}
+          >
+            {moreOpen ? <X size={17} /> : <Menu size={17} />}
+            <span className="mt-0.5 text-[9px] tracking-tight">More</span>
+          </button>
         </div>
       </nav>
     </>
