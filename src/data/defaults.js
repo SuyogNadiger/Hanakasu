@@ -177,7 +177,8 @@ export const INITIAL_APP_DATA = {
     pinCode: '',
     monthlySpendLimit: 0, // Point 5: Overall Monthly Budget Limit (₹)
     lastCcReminderMonth: '', // Tracks auto-monthly CC due reminder
-    homeSavingsExcludedInstrumentIds: []
+    homeSavingsExcludedInstrumentIds: [],
+    primaryAccountId: 'acc_cash'
   },
   liquidMfOpeningBalance: 0,
   emergencyReserve: {

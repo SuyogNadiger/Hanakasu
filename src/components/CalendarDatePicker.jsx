@@ -22,10 +22,16 @@ function toISO(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function formatValue(value, mode) {
+function formatValue(value, mode, compact) {
   if (mode === 'month') {
     const match = /^(\d{4})-(\d{2})$/.exec(value || '');
     return match ? `${monthNames[Number(match[2]) - 1]} ${match[1]}` : '';
+  }
+  if (compact) {
+    const date = parseDate(value);
+    return date
+      ? date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+      : '';
   }
   return formatDateDisplay(value);
 }
@@ -102,7 +108,7 @@ export default function CalendarDatePicker({
   const containerRef = useRef(null);
   const popupRef = useRef(null);
   const inputRef = useRef(null);
-  const [input, setInput] = useState(() => ({ value, text: formatValue(value, mode) }));
+  const [input, setInput] = useState(() => ({ value, text: formatValue(value, mode, compact) }));
   const [open, setOpen] = useState(false);
   const [invalid, setInvalid] = useState(false);
   const [popupPosition, setPopupPosition] = useState(null);
@@ -115,7 +121,7 @@ export default function CalendarDatePicker({
   const [visibleYear, setVisibleYear] = useState(initialDate.getFullYear());
 
   if (input.value !== value) {
-    setInput({ value, text: formatValue(value, mode) });
+    setInput({ value, text: formatValue(value, mode, compact) });
   }
 
   useEffect(() => {
@@ -171,7 +177,7 @@ export default function CalendarDatePicker({
 
   const chooseValue = (nextValue) => {
     if (isBeyondMonthLimit(nextValue)) return;
-    setInput({ value: nextValue, text: formatValue(nextValue, mode) });
+    setInput({ value: nextValue, text: formatValue(nextValue, mode, compact) });
     setInvalid(false);
     inputRef.current?.setCustomValidity('');
     onChange(nextValue);
@@ -186,7 +192,7 @@ export default function CalendarDatePicker({
     setInvalid(futureMonth);
     event.currentTarget.setCustomValidity(futureMonth ? invalidMessage(true) : parsed === null ? invalidMessage() : '');
     if (parsed !== null && !futureMonth) {
-      setInput({ value: parsed, text: formatValue(parsed, mode) });
+      setInput({ value: parsed, text: formatValue(parsed, mode, compact) });
       onChange(parsed);
     } else if (!text.trim() && !required) {
       onChange('');
@@ -237,7 +243,7 @@ export default function CalendarDatePicker({
 
   return (
     <div ref={containerRef} className={`relative min-w-0 ${className}`}>
-      <div className={`flex items-center border hm-border hm-input p-0 ${compact ? 'rounded-lg' : 'rounded-xl'} ${invalid ? 'border-rose-500' : ''}`}>
+      <div className={`flex items-center border hm-border hm-input p-0 ${compact ? 'h-8 rounded-lg' : 'rounded-xl'} ${invalid ? 'border-rose-500' : ''}`}>
         <input
           ref={inputRef}
           type="text"
@@ -257,6 +263,7 @@ export default function CalendarDatePicker({
             }
             if (event.key === 'Escape') setOpen(false);
           }}
+          style={compact ? { paddingLeft: '0.35rem', paddingRight: '0.2rem' } : undefined}
           className={`min-w-0 w-full bg-transparent font-mono-num font-bold outline-none ${compact ? 'px-2 py-1.5 text-[11px]' : 'px-3 py-2.5 text-xs'}`}
         />
         <button

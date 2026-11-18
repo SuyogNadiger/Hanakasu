@@ -151,6 +151,14 @@ function normalizeSearchText(value) {
     .trim();
 }
 
+function containsNormalizedWord(text, word) {
+  const variants = [word, `${word}s`, `${word}es`];
+  if (word.endsWith("y") && word.length > 2) {
+    variants.push(`${word.slice(0, -1)}ies`);
+  }
+  return variants.some((variant) => text.includes(` ${variant} `));
+}
+
 function parseMagicTime(text) {
   const match = text.match(
     /\b(?:at\s*)?((?:1[0-2]|0?[1-9]):[0-5]\d\s*(?:am|pm)|(?:[01]?\d|2[0-3]):[0-5]\d|(?:1[0-2]|0?[1-9])\s*(?:am|pm))\b/i,
@@ -172,7 +180,12 @@ function parseMagicTime(text) {
   return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${period}`;
 }
 
-export function smartParseMagicInput(rawText, categories = [], accounts = []) {
+export function smartParseMagicInput(
+  rawText,
+  categories = [],
+  accounts = [],
+  primaryAccountId = "",
+) {
   if (!rawText || !rawText.trim()) return null;
   const text = rawText.trim();
 
@@ -183,9 +196,28 @@ export function smartParseMagicInput(rawText, categories = [], accounts = []) {
   const amountSource = text
     .replace(timeMatch?.[0] || "", " ")
     .replace(isoDateMatch?.[0] || "", " ");
-  const amountMatch = amountSource.match(
-    /(?:₹|rs\.?\s*)?(\d+(?:,\d+)*(?:\.\d+)?)(?:\s*(k|thousand|l|lakh|lakhs|m|million)\b)?/i,
-  );
+  const amountPattern =
+    /(?:₹\s*|rs\.?\s*|inr\s*|rupees?\s*)?(\d+(?:,\d+)*(?:\.\d+)?)(?:\s*(k|thousand|l|lakh|lakhs|m|million|rupees?|inr|rs)\b)?(?:\s*\/-)?/gi;
+  const amountMatches = [];
+  let amountCandidate;
+  while ((amountCandidate = amountPattern.exec(amountSource))) {
+    const precedingWords = amountSource
+      .slice(Math.max(0, amountCandidate.index - 24), amountCandidate.index);
+    const hasCurrencyPrefix = /^(?:₹|rs|inr)/i.test(amountCandidate[0]);
+    const suffix = amountCandidate[2]?.toLowerCase();
+    const hasCurrencySuffix = ["rupee", "rupees", "inr", "rs"].includes(suffix);
+    const hasAmountCue =
+      /\b(?:amount|spent|paid|cost|total|worth|for|price)\s*(?:of\s*)?$/i.test(precedingWords);
+    amountMatches.push({
+      match: amountCandidate,
+      priority: hasCurrencyPrefix || hasCurrencySuffix ? 3 : hasAmountCue ? 2 : 1,
+    });
+  }
+  const amountMatch = amountMatches
+    .sort((first, second) =>
+      second.priority - first.priority ||
+      first.match.index - second.match.index,
+    )[0]?.match;
   const amountSuffix = amountMatch?.[2]?.toLowerCase();
   const amountMultiplier = ["k", "thousand"].includes(amountSuffix)
     ? 1000
@@ -220,6 +252,7 @@ export function smartParseMagicInput(rawText, categories = [], accounts = []) {
   const mentionedAccount = sourceMatch.account;
   const sourceMentionAmbiguous = sourceMatch.ambiguous;
   const defaultAccount =
+    eligibleAccounts.find((account) => account.id === primaryAccountId) ||
     eligibleAccounts.find((account) => account.type !== "credit") ||
     eligibleAccounts[0];
   const creditAccounts = accounts.filter((account) => account.type === "credit");
@@ -263,44 +296,66 @@ export function smartParseMagicInput(rawText, categories = [], accounts = []) {
     type === "income" ? c.type === "income" : c.type === "expense",
   );
   const normalizedText = ` ${normalizeSearchText(text)} `;
+  const genericSubcategories = new Set([
+    "family",
+    "home purpose",
+    "miscellaneous",
+    "needs",
+  ]);
   let matchedCat = null;
   let matchedSub = "";
-
+  let bestCategoryScore = 0;
   for (const cat of relevantCats) {
-    const subHit = (cat.subcategories || []).find((sub) => {
+    for (const sub of cat.subcategories || []) {
       const phrase = normalizeSearchText(sub);
-      if (phrase && normalizedText.includes(` ${phrase} `)) return true;
-      return phrase
+      if (!phrase) continue;
+      const exactPhrase = normalizedText.includes(` ${phrase} `);
+      const matchedWord = phrase
         .split(" ")
-        .some((word) => word.length >= 3 && normalizedText.includes(` ${word} `));
-    });
-    if (subHit) {
-      matchedCat = cat;
-      matchedSub = subHit;
-      break;
+        .filter((word) => word.length >= 4)
+        .find((word) => containsNormalizedWord(normalizedText, word));
+      const generic = genericSubcategories.has(phrase);
+      const score = exactPhrase
+        ? (generic ? 150 : 500) + phrase.length
+        : matchedWord
+          ? (generic ? 100 : 330) + matchedWord.length
+          : 0;
+      if (score > bestCategoryScore) {
+        bestCategoryScore = score;
+        matchedCat = cat;
+        matchedSub = sub;
+      }
     }
-  }
 
-  for (const cat of relevantCats) {
-    if (matchedCat) break;
-    const normalizedName = normalizeSearchText(cat.name);
-    const keywordHit = (cat.keywords || []).some((keyword) => {
+    const categoryName = normalizeSearchText(cat.name);
+    if (categoryName && normalizedText.includes(` ${categoryName} `)) {
+      const score = 600 + categoryName.length;
+      if (score > bestCategoryScore) {
+        bestCategoryScore = score;
+        matchedCat = cat;
+        matchedSub = "";
+      }
+    }
+
+    for (const keyword of cat.keywords || []) {
       const phrase = normalizeSearchText(keyword);
-      return phrase && normalizedText.includes(` ${phrase} `);
-    });
-    if (
-      keywordHit ||
-      (normalizedName && normalizedText.includes(` ${normalizedName} `))
-    ) {
-      matchedCat = cat;
-      break;
+      if (phrase && normalizedText.includes(` ${phrase} `)) {
+        const score = 300 + phrase.length;
+        if (score > bestCategoryScore) {
+          bestCategoryScore = score;
+          matchedCat = cat;
+          matchedSub = "";
+        }
+      }
     }
   }
 
-  matchedCat =
-    matchedCat ||
-    relevantCats.find((cat) => cat.id === "cat_other") ||
-    relevantCats[0];
+  if (!matchedCat) {
+    matchedCat =
+      relevantCats.find((cat) => cat.id === "cat_other") ||
+      relevantCats[0] ||
+      null;
+  }
   const explicitNote = /\b(?:note|memo|description)\s*[:=-]\s*(.+)$/i.exec(text)?.[1];
   let narrative = (explicitNote || text)
     .replace(amountMatch?.[0] || "", " ")
@@ -574,72 +629,6 @@ export async function triggerWorkableAlert({
     error:
       deliveryError ||
       (emailAccepted ? "" : "No recipient email address is configured."),
-  };
-}
-
-export async function analyzeGoalWithAI(goal, finState, profile) {
-  const remaining = Math.max(
-    0,
-    (Number(goal.targetAmount) || 0) - (Number(goal.savedAmount) || 0),
-  );
-  const today = new Date();
-  const target =
-    parseLocalDateISO(goal.targetDate) ||
-    new Date(today.getFullYear() + 1, today.getMonth(), 1);
-  const monthsLeft = Math.max(
-    1,
-    Math.ceil((target - today) / (1000 * 60 * 60 * 24 * 30)),
-  );
-  const requiredMonthly = Math.ceil(remaining / monthsLeft);
-
-  const configuredSalary = Number(profile?.monthlySalary) || 0;
-  const actualMonthlyIncome = finState.monthlyIncome || 0;
-  const effectiveMonthlyIncome = Math.max(
-    configuredSalary,
-    actualMonthlyIncome,
-    finState.avgMonthlyIncome || 0,
-  );
-  const monthlySurplus = Math.max(
-    0,
-    effectiveMonthlyIncome - finState.monthlyExpense,
-  );
-
-  const salarySharePct =
-    effectiveMonthlyIncome > 0
-      ? Number(((requiredMonthly / effectiveMonthlyIncome) * 100).toFixed(1))
-      : 100;
-
-  let isPossibleVerdict = "Possible & Comfortable";
-  if (remaining === 0) {
-    isPossibleVerdict = "Goal Completed ✓";
-  } else if (effectiveMonthlyIncome === 0) {
-    isPossibleVerdict = "Add Monthly Salary in Profile to Verify";
-  } else if (requiredMonthly <= monthlySurplus && salarySharePct <= 35) {
-    isPossibleVerdict = "Yes — Easily Possible on Your Salary";
-  } else if (requiredMonthly <= effectiveMonthlyIncome * 0.6) {
-    isPossibleVerdict = "Possible with Moderate Expense Control";
-  } else {
-    isPossibleVerdict = "Stretch Target — Extend Target Date";
-  }
-
-  return {
-    monthsLeft,
-    requiredMonthly,
-    effectiveMonthlyIncome,
-    monthlySurplus,
-    salarySharePct,
-    isPossibleVerdict,
-    summary:
-      effectiveMonthlyIncome > 0
-        ? `Based on your monthly income of ${formatINR(effectiveMonthlyIncome)} and available bank balance of ${formatINR(finState.selectedBankBalance)}, saving ${formatINR(requiredMonthly)}/month takes ${salarySharePct}% of your monthly income over ${monthsLeft} months.`
-        : `You need ${formatINR(requiredMonthly)}/month for ${monthsLeft} months. Set your Monthly Salary in Profile to benchmark against your income.`,
-    recommendations: [
-      `Available across your bank accounts: ${formatINR(finState.selectedBankBalance)}.`,
-      effectiveMonthlyIncome > 0
-        ? `Monthly Surplus after expenses is ${formatINR(monthlySurplus)} (Income ${formatINR(effectiveMonthlyIncome)} − Spent ${formatINR(finState.monthlyExpense)}).`
-        : `Record your salary inflow or set Monthly Salary in Profile to see surplus coverage.`,
-      `Setting aside ${formatINR(Math.ceil(requiredMonthly / 4))}/week keeps you on track for ${formatDateDisplay(goal.targetDate) || "your target"}.`,
-    ],
   };
 }
 

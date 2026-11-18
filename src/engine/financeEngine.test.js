@@ -6,6 +6,7 @@ import {
   DEFAULT_CATEGORIES,
   DEFAULT_GOALS,
   DEFAULT_INVESTMENTS,
+  INITIAL_APP_DATA,
   hasLegacyFinancialPresets,
   removeLegacyFinancialPresets,
 } from "../data/defaults.js";
@@ -17,6 +18,7 @@ import {
 
 test("new user defaults keep Cash Wallet and categories without seeded assets", () => {
   assert.deepEqual(DEFAULT_ACCOUNTS.map((account) => account.id), ["acc_cash"]);
+  assert.equal(INITIAL_APP_DATA.settings.primaryAccountId, "acc_cash");
   assert.ok(DEFAULT_CATEGORIES.length > 0);
   assert.deepEqual(DEFAULT_INVESTMENTS, []);
   assert.deepEqual(DEFAULT_AUTOPAY_RULES, []);
@@ -174,6 +176,56 @@ test("magic parsing extracts a currency amount, category, subcategory, account, 
   assert.equal(parsed.subcategory, "Cravings");
   assert.equal(parsed.accountId, "acc_cash");
   assert.equal(parsed.time, "8:30 pm");
+});
+
+test("magic parsing uses the selected primary account when no account is named", () => {
+  const accounts = [
+    { id: "cash", name: "Cash Wallet", type: "cash" },
+    { id: "bank", name: "Union Bank", nickname: "Union", type: "bank" },
+  ];
+  const parsed = smartParseMagicInput(
+    "I paid Rs 1,250 rupees at Zomato yesterday",
+    DEFAULT_CATEGORIES,
+    accounts,
+    "bank",
+  );
+
+  assert.equal(parsed.amount, 1250);
+  assert.equal(parsed.accountId, "bank");
+  assert.equal(parsed.accountExplicit, false);
+  assert.equal(parsed.categoryId, "cat_food");
+  assert.equal(parsed.subcategory, "Swiggy / Zomato");
+  assert.equal(parsed.description, "Zomato");
+});
+
+test("magic parsing prefers an explicit currency amount over item quantities", () => {
+  const currencyAmount = smartParseMagicInput(
+    "Bought 2 coffees for ₹300 using Cash Wallet",
+    DEFAULT_CATEGORIES,
+    DEFAULT_ACCOUNTS,
+  );
+  const contextualAmount = smartParseMagicInput(
+    "Bought 2 coffees for 300 using Cash Wallet",
+    DEFAULT_CATEGORIES,
+    DEFAULT_ACCOUNTS,
+  );
+
+  assert.equal(currencyAmount.amount, 300);
+  assert.equal(contextualAmount.amount, 300);
+  assert.equal(currencyAmount.accountId, "acc_cash");
+  assert.equal(currencyAmount.categoryId, "cat_food");
+  assert.equal(currencyAmount.subcategory, "Chai & Coffee");
+});
+
+test("magic category matching prefers a specific category over a generic subcategory", () => {
+  const parsed = smartParseMagicInput(
+    "₹250 groceries for family",
+    DEFAULT_CATEGORIES,
+    DEFAULT_ACCOUNTS,
+  );
+
+  assert.equal(parsed.categoryId, "cat_housing");
+  assert.equal(parsed.subcategory, "Groceries");
 });
 
 test("magic transfer parsing identifies source and destination instead of guessing", () => {

@@ -1072,6 +1072,7 @@ export default function App({ user, onSignOut }) {
             }}
             onAddSubcategory={addSubcategory}
             computedAccounts={finState.computedAccounts}
+            primaryAccountId={data.settings.primaryAccountId}
             emergencyReserve={data.emergencyReserve}
             emergencyReserveBalance={finState.emergencyReserveBalance}
             categories={data.categories}
@@ -1274,6 +1275,13 @@ export default function App({ user, onSignOut }) {
             <AccountsView
               finState={finState}
               hideBalances={data.settings.hideBalances}
+              primaryAccountId={data.settings.primaryAccountId}
+              onSetPrimaryAccount={(id) =>
+                updateLocalData((prev) => ({
+                  ...prev,
+                  settings: { ...prev.settings, primaryAccountId: id },
+                }))
+              }
               onAlterBalance={handleAlterBalance}
               onPayCreditCard={handlePayCreditCard}
               onTogglePinHome={handleTogglePinHome}
@@ -1292,10 +1300,20 @@ export default function App({ user, onSignOut }) {
                 }))
               }
               onDeleteAccount={(id) =>
-                updateLocalData((prev) => ({
-                  ...prev,
-                  accounts: prev.accounts.filter((a) => a.id !== id),
-                }))
+                updateLocalData((prev) => {
+                  const accounts = prev.accounts.filter((account) => account.id !== id);
+                  const primaryAccountId =
+                    prev.settings.primaryAccountId === id
+                      ? accounts.find((account) => account.type !== "credit")?.id ||
+                        accounts[0]?.id ||
+                        ""
+                      : prev.settings.primaryAccountId;
+                  return {
+                    ...prev,
+                    accounts,
+                    settings: { ...prev.settings, primaryAccountId },
+                  };
+                })
               }
             />
           )}
@@ -1501,6 +1519,7 @@ export default function App({ user, onSignOut }) {
         onSave={handleSaveTransaction}
         onAddSubcategory={addSubcategory}
         computedAccounts={finState.computedAccounts}
+        primaryAccountId={data.settings.primaryAccountId}
         emergencyReserve={data.emergencyReserve}
         emergencyReserveBalance={finState.emergencyReserveBalance}
         categories={data.categories}

@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
-  X, Clock, Plus, ArrowRight, AlertCircle, Sparkles, Check
+  X, Clock, Plus, ArrowRight, AlertCircle, Check
 } from 'lucide-react';
 import {
   getTodayISO,
@@ -11,13 +11,12 @@ import {
 } from '../engine/financeEngine';
 import { BrandLogo } from './Sidebar';
 import CalendarDatePicker from './CalendarDatePicker';
-import { auth } from '../firebase';
 
 function toTimeInputValue(value) {
   const twelveHour = /^(\d{1,2}):(\d{2})\s*(am|pm)$/i.exec(value || '');
   if (twelveHour) {
-    let hour = Number(twelveHour[1]) % 12;
-    if (twelveHour[3].toLowerCase() === 'pm') hour += 12;
+    const hour = Number(twelveHour[1]) % 12 +
+      (twelveHour[3].toLowerCase() === 'pm' ? 12 : 0);
     return `${String(hour).padStart(2, '0')}:${twelveHour[2]}`;
   }
   const twentyFourHour = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value || '');
@@ -26,25 +25,9 @@ function toTimeInputValue(value) {
 
 function toStoredTime(value) {
   const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value || '');
-  if (!match) return getCurrentTimeStr();
+  if (!match) return null;
   const hour = Number(match[1]);
   return `${hour % 12 || 12}:${match[2]} ${hour >= 12 ? 'pm' : 'am'}`;
-}
-
-function isDescriptionImprovement(candidate, current) {
-  const candidateWords = String(candidate || '')
-    .toLowerCase()
-    .match(/[a-z0-9]+/g) || [];
-  const currentWords = String(current || '')
-    .toLowerCase()
-    .match(/[a-z0-9]+/g) || [];
-  if (!candidateWords.length) return false;
-  if (!currentWords.length) return true;
-  if (/^(expense|income|transaction|payment|purchase|transfer)$/.test(candidateWords.join(' '))) {
-    return false;
-  }
-  return candidateWords.length > currentWords.length &&
-    currentWords.every((word) => candidateWords.includes(word));
 }
 
 export default function TransactionModal({
@@ -53,6 +36,7 @@ export default function TransactionModal({
   onSave,
   onAddSubcategory,
   computedAccounts,
+  primaryAccountId = '',
   emergencyReserve = { name: 'Emergency Reserve', sourceAccountId: 'liquid_mf' },
   emergencyReserveBalance = 0,
   categories,
@@ -63,8 +47,14 @@ export default function TransactionModal({
   const [type, setType] = useState(() => editingTx?.type || 'expense');
   const [amountInput, setAmountInput] = useState(() => String(editingTx?.amount || ''));
   const [date, setDate] = useState(() => editingTx?.date || getTodayISO());
-  const [time, setTime] = useState(() => editingTx?.time || getCurrentTimeStr());
-  const [accountId, setAccountId] = useState(() => editingTx?.accountId || computedAccounts.find(acc => acc.type !== 'credit')?.id || '');
+  const initialTime = editingTx?.time || getCurrentTimeStr();
+  const [timeInput, setTimeInput] = useState(() => toTimeInputValue(initialTime));
+  const [accountId, setAccountId] = useState(() =>
+    editingTx?.accountId ||
+    primaryAccountId ||
+    computedAccounts.find((account) => account.type !== 'credit')?.id ||
+    '',
+  );
   const [toAccountId, setToAccountId] = useState(() =>
     editingTx?.isEmergencyReserveContribution || editingTx?.toAccountId === 'liquid_mf'
       ? 'emergency_reserve'
@@ -76,9 +66,6 @@ export default function TransactionModal({
   const [newSubName, setNewSubName] = useState('');
   const [showAddSub, setShowAddSub] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [aiStatus, setAiStatus] = useState('');
-  const [aiPending, setAiPending] = useState(false);
-  const [geminiUnavailable, setGeminiUnavailable] = useState(false);
   const [accountManuallySelected, setAccountManuallySelected] = useState(false);
   const [destinationManuallySelected, setDestinationManuallySelected] = useState(false);
 
@@ -86,14 +73,23 @@ export default function TransactionModal({
   // - Income & Transfer: Banks & Cash ONLY (No Credit Card, No Liquid MF)
   // - Expense: Banks, Cash & Credit Card (No Liquid MF)
   const allowedSourceAccounts = useMemo(() => {
-    return computedAccounts.filter(acc => {
-      if (acc.type === 'liquid_mf') return false;
-      if ((type === 'income' || type === 'transfer') && acc.type === 'credit') {
-        return false;
-      }
-      return true;
-    });
-  }, [computedAccounts, type]);
+    return computedAccounts
+      .filter(acc => {
+        if (acc.type === 'liquid_mf') return false;
+        if ((type === 'income' || type === 'transfer') && acc.type === 'credit') {
+          return false;
+        }
+        return true;
+      })
+      .sort((first, second) => {
+        if (first.type === 'cash' || second.type === 'cash') {
+          return Number(first.type === 'cash') - Number(second.type === 'cash');
+        }
+        if (first.id === primaryAccountId) return -1;
+        if (second.id === primaryAccountId) return 1;
+        return 0;
+      });
+  }, [computedAccounts, type, primaryAccountId]);
 
   const selectedAccountId = allowedSourceAccounts.some(acc => acc.id === accountId)
     ? accountId
@@ -133,20 +129,22 @@ export default function TransactionModal({
     return relevantCategories.find(c => c.id === categoryId) || null;
   }, [relevantCategories, categoryId]);
   const magicParsed = useMemo(
-    () => smartParseMagicInput(magicInput, categories, computedAccounts),
-    [magicInput, categories, computedAccounts],
+    () => smartParseMagicInput(magicInput, categories, computedAccounts, primaryAccountId),
+    [magicInput, categories, computedAccounts, primaryAccountId],
   );
 
-  // Apply deterministic account matches before asynchronous Gemini suggestions.
+  const applyTime = (value) => {
+    const formattedInput = toTimeInputValue(value);
+    if (!formattedInput) return;
+    setTimeInput(formattedInput);
+  };
+
+  // Parse locally so recognized transaction details are available immediately.
   const handleMagicBarChange = (val) => {
     setMagicInput(val);
-    setAiPending(!geminiUnavailable && val.trim().length >= 4);
     setAccountManuallySelected(false);
     setDestinationManuallySelected(false);
-    setAiStatus(geminiUnavailable
-      ? 'Gemini is not configured on the server. Local suggestions are active; add GEMINI_API_KEY to enable AI parsing.'
-      : '');
-    const parsed = smartParseMagicInput(val, categories, computedAccounts);
+    const parsed = smartParseMagicInput(val, categories, computedAccounts, primaryAccountId);
     if (parsed) {
       if (parsed.type) setType(parsed.type);
       if (parsed.amount !== undefined) setAmountInput(String(parsed.amount));
@@ -154,107 +152,23 @@ export default function TransactionModal({
       setToAccountId(parsed.type === 'transfer' ? parsed.toAccountId || '' : '');
       if (parsed.categoryId) setCategoryId(parsed.categoryId);
       if (parsed.subcategory !== undefined) setSubcategory(parsed.subcategory);
-      const localDescription = magicParsed?.description?.trim() || '';
-      if (isDescriptionImprovement(parsed.description, localDescription)) {
-        setDescription((current) => {
-          const currentDescription = current.trim();
-          return currentDescription && currentDescription !== localDescription
-            ? current
-            : parsed.description.trim();
-        });
-      }
+      if (parsed.description) setDescription(parsed.description);
       if (parsed.date) setDate(parsed.date);
-      if (parsed.time) setTime(parsed.time);
+      if (parsed.time) applyTime(parsed.time);
     }
   };
-
-  useEffect(() => {
-    const text = magicInput.trim();
-    if (!isOpen || editingTx || geminiUnavailable || text.length < 4) return undefined;
-
-    const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      setAiStatus('Interpreting with Gemini…');
-      try {
-        const idToken = await auth?.currentUser?.getIdToken();
-        if (!idToken) throw new Error('Sign in again to use Gemini suggestions.');
-        const response = await fetch('/api/parse-transaction', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${idToken}`
-          },
-          signal: controller.signal,
-          body: JSON.stringify({
-            text,
-            today: getTodayISO(),
-            categories,
-            accounts: [
-              {
-                id: 'emergency_reserve',
-                name: emergencyReserve.name || 'Emergency Reserve',
-                type: 'emergency_reserve',
-              },
-              ...computedAccounts,
-            ]
-          })
-        });
-        const result = await response.json();
-        if (!response.ok) {
-          if (response.status === 503 && /not configured/i.test(result.error || '')) {
-            setGeminiUnavailable(true);
-            setAiPending(false);
-            setAiStatus('Gemini is not configured on the server. Local suggestions are active; add GEMINI_API_KEY to enable AI parsing.');
-            return;
-          }
-          throw new Error(result.error || 'Gemini transaction parsing failed.');
-        }
-        if (controller.signal.aborted) return;
-
-        const parsed = result.suggestion || {};
-        if (parsed.type) setType(parsed.type);
-        if (parsed.amount !== undefined) setAmountInput(String(parsed.amount));
-        if (parsed.categoryId) setCategoryId(parsed.categoryId);
-        if (parsed.subcategory !== undefined) setSubcategory(parsed.subcategory);
-        if (parsed.description !== undefined) setDescription(parsed.description);
-        if (parsed.date) setDate(parsed.date);
-        if (parsed.time) setTime(parsed.time);
-        setAiPending(false);
-        setAiStatus(
-          Object.keys(parsed).length
-            ? 'Gemini suggestions applied. Review before saving.'
-            : 'Gemini could not identify transaction details. Local suggestions remain available.'
-        );
-      } catch (error) {
-        if (error.name === 'AbortError') return;
-        setAiPending(false);
-        setAiStatus(`Gemini suggestions failed: ${error.message} Local suggestions remain available.`);
-      }
-    }, 650);
-
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [magicInput, isOpen, editingTx, categories, computedAccounts, emergencyReserve, geminiUnavailable, magicParsed]);
 
   if (!isOpen) return null;
 
   const evaluatedAmount = evaluateMathExpression(amountInput);
 
   const handleClose = () => {
-    setAiPending(false);
     onClose();
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     setErrorMsg('');
-
-    if (aiPending) {
-      setErrorMsg('Wait for transaction details to finish checking before saving.');
-      return;
-    }
 
     if (magicParsed?.accountAmbiguous && !accountManuallySelected) {
       setErrorMsg('More than one account matches the prompt. Select the correct Paying From account.');
@@ -263,6 +177,12 @@ export default function TransactionModal({
 
     if (magicParsed?.destinationAmbiguous && !destinationManuallySelected) {
       setErrorMsg('More than one destination account matches the prompt. Select the correct destination.');
+      return;
+    }
+
+    const transactionTime = toStoredTime(timeInput);
+    if (!transactionTime) {
+      setErrorMsg('Choose a valid transaction time.');
       return;
     }
 
@@ -324,7 +244,7 @@ export default function TransactionModal({
       type,
       amount: evaluatedAmount,
       date,
-      time,
+      time: transactionTime,
       accountId: selectedAccountId,
       toAccountId: type === 'transfer' ? actualDestinationId : null,
       isEmergencyReserveContribution,
@@ -379,55 +299,6 @@ export default function TransactionModal({
             </div>
           )}
 
-          {/* SMART MAGIC BAR (Point 9: Restored!) */}
-          {!editingTx && (
-            <div className="p-3 rounded-xl border hm-elevated hm-border space-y-1.5">
-              <label className="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 hm-text-muted">
-                <Sparkles size={12} /> Describe the transaction
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={magicInput}
-                  onChange={(e) => handleMagicBarChange(e.target.value)}
-                  placeholder='e.g. "₹180 cravings from Union at 8:30 pm"'
-                  className="hm-input min-w-0 flex-1 rounded-lg px-3 py-2 text-xs font-medium outline-none"
-                />
-                <button
-                  type="submit"
-                  aria-label="Save transaction"
-                  title="Save transaction"
-                  disabled={aiPending}
-                  className="sm:hidden h-9 w-9 shrink-0 rounded-lg hm-btn-primary flex items-center justify-center cursor-pointer disabled:cursor-wait disabled:opacity-50"
-                >
-                  <Check size={18} strokeWidth={2.75} />
-                </button>
-              </div>
-              {magicParsed?.accountAmbiguous && !accountManuallySelected && (
-                <p className="text-[10px] font-semibold text-amber-500" role="alert">
-                  More than one account matches. Select the correct Paying From account before saving.
-                </p>
-              )}
-              {magicParsed?.accountExplicit &&
-                magicParsed.accountId === selectedAccountId &&
-                !accountManuallySelected && (
-                  <p className="truncate text-[10px] hm-text-muted" aria-live="polite">
-                    Account recognized: {selectedSourceAccount?.name}
-                  </p>
-                )}
-              {aiPending && !aiStatus && (
-                <p className="text-[10px] hm-text-muted" aria-live="polite">
-                  Checking the transaction details…
-                </p>
-              )}
-              {aiStatus && (
-                <p className="text-[10px] hm-text-muted" aria-live="polite">
-                  {aiStatus}
-                </p>
-              )}
-            </div>
-          )}
-
           {/* 1. TYPE SWITCHER */}
           <div className="grid grid-cols-3 p-1 rounded-xl border hm-elevated hm-border font-bold">
             {['income', 'expense', 'transfer'].map(t => (
@@ -444,26 +315,41 @@ export default function TransactionModal({
             ))}
           </div>
 
-          <div className="flex items-center justify-between gap-2">
-            <CalendarDatePicker
-              value={date}
-              onChange={setDate}
-              ariaLabel="Transaction date"
-              compact
-              className="w-36"
-            />
-            <label className="flex items-center gap-1 text-[11px] hm-text-muted">
-              <Clock size={13} />
-              <span className="sr-only">Transaction time</span>
-              <input
-                type="time"
-                required
-                value={toTimeInputValue(time)}
-                onChange={(event) => setTime(toStoredTime(event.target.value))}
-                aria-label="Transaction time"
-                className="hm-input w-[6.25rem] rounded-lg px-1.5 py-1.5 text-[11px]"
+          <div className="grid min-w-0 grid-cols-2 items-stretch gap-1.5 sm:flex sm:gap-2">
+            <div className="grid min-w-0 grid-cols-2 gap-1.5">
+              <CalendarDatePicker
+                value={date}
+                onChange={setDate}
+                ariaLabel="Transaction date"
+                compact
+                className="h-8 w-full min-w-0 sm:w-36"
               />
-            </label>
+              <label className="relative block h-8 w-full min-w-0 text-[11px] hm-text-muted sm:w-36">
+                <span className="sr-only">Transaction time</span>
+                <Clock
+                  size={13}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2"
+                />
+                <input
+                  type="time"
+                  required
+                  step="60"
+                  value={timeInput}
+                  onChange={(event) => setTimeInput(event.target.value)}
+                  aria-label="Transaction time"
+                  style={{ paddingLeft: '1.7rem', paddingRight: '0.35rem' }}
+                  className="hm-input h-8 w-full rounded-lg py-1.5 text-[11px]"
+                />
+              </label>
+            </div>
+            <button
+              type="submit"
+              className="h-8 w-full min-w-0 whitespace-nowrap rounded-lg hm-btn-primary px-2 text-[10px] font-extrabold sm:hidden"
+              aria-label={`Save ${type}`}
+            >
+              {editingTx ? 'Save changes' : `Save ${type}`}
+            </button>
           </div>
 
           {/* 3. PAYING FROM / CREDITED TO TABS WITH AUTHENTIC LOGOS */}
@@ -570,6 +456,14 @@ export default function TransactionModal({
                 placeholder="0"
                 className="hm-input font-mono-num w-full rounded-xl px-3.5 py-3 text-center text-3xl font-extrabold outline-none sm:py-2.5 sm:text-left sm:text-lg"
               />
+              <input
+                type="text"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="Short note"
+                aria-label="Short note"
+                className="w-full border-0 bg-transparent px-0 py-0.5 text-center text-xs font-semibold leading-5 outline-none placeholder:opacity-60 sm:hidden"
+              />
               {/[+\-×÷xX*/]/.test(amountInput) && (
                 <span className="mt-1 block text-center text-[11px] hm-text-muted sm:text-left">
                   = <strong>{formatINR(evaluatedAmount, false, true)}</strong>
@@ -577,7 +471,7 @@ export default function TransactionModal({
               )}
             </div>
 
-            <div className="sm:col-span-7">
+            <div className="hidden sm:col-span-7 sm:block">
               <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider hm-text-muted">
                 Short Narrative (Optional)
               </label>
@@ -688,21 +582,60 @@ export default function TransactionModal({
             </div>
           )}
 
+          {!editingTx && (
+            <div className="space-y-1.5 rounded-xl border p-3 hm-elevated hm-border">
+              <label className="block text-[10px] font-bold uppercase tracking-wider hm-text-muted">
+                Quick entry
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={magicInput}
+                  onChange={(event) => handleMagicBarChange(event.target.value)}
+                  placeholder='e.g. "₹180 cravings from Union at 8:30 pm"'
+                  className="hm-input min-w-0 flex-1 rounded-lg px-3 py-2 text-xs font-medium outline-none"
+                  aria-label="Describe transaction for quick entry"
+                />
+                <button
+                  type="submit"
+                  aria-label={`Save ${type}`}
+                  title={`Save ${type}`}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg hm-btn-primary cursor-pointer sm:hidden"
+                >
+                  <Check size={17} />
+                </button>
+              </div>
+              {magicParsed?.accountAmbiguous && !accountManuallySelected && (
+                <p className="text-[10px] font-semibold text-amber-500" role="alert">
+                  More than one account matches. Select the correct Paying From account before saving.
+                </p>
+              )}
+              {magicParsed?.destinationAmbiguous && !destinationManuallySelected && (
+                <p className="text-[10px] font-semibold text-amber-500" role="alert">
+                  More than one destination matches. Choose the correct Transfer To account.
+                </p>
+              )}
+              {magicParsed?.accountExplicit &&
+                magicParsed.accountId === selectedAccountId &&
+                !accountManuallySelected && (
+                  <p className="truncate text-[10px] hm-text-muted" aria-live="polite">
+                    Matched account: {selectedSourceAccount?.name}
+                  </p>
+                )}
+              {!magicParsed?.accountAmbiguous && magicParsed?.categoryId && type !== 'transfer' && (
+                <p className="truncate text-[10px] hm-text-muted" aria-live="polite">
+                  Matched category: {activeCategoryObj?.name}
+                  {magicParsed.subcategory ? ` · ${magicParsed.subcategory}` : ''}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* 7. SUBMIT */}
           <div className="hidden justify-end border-t hm-border pt-3 sm:flex">
             <button
               type="submit"
-              disabled={aiPending}
-              className="px-6 py-2.5 rounded-xl hm-btn-primary font-extrabold text-xs uppercase tracking-wider cursor-pointer disabled:cursor-wait disabled:opacity-50"
-            >
-              {editingTx ? 'Save Changes' : `Save ${type}`}
-            </button>
-          </div>
-          <div className="sticky bottom-0 -mx-4 -mb-4 flex justify-end border-t hm-border hm-surface p-3 sm:hidden">
-            <button
-              type="submit"
-              disabled={aiPending}
-              className="w-full rounded-xl hm-btn-primary px-6 py-3 font-extrabold text-xs uppercase tracking-wider cursor-pointer disabled:cursor-wait disabled:opacity-50"
+              className="px-6 py-2.5 rounded-xl hm-btn-primary font-extrabold text-xs uppercase tracking-wider cursor-pointer"
             >
               {editingTx ? 'Save Changes' : `Save ${type}`}
             </button>

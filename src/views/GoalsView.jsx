@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import {
-  Sparkles, Plus, Trash2, Pencil, X, CheckCircle2, AlertTriangle
+  Plus, Trash2, Pencil, AlertTriangle
 } from 'lucide-react';
-import { formatDateDisplay, formatINR, analyzeGoalWithAI } from '../engine/financeEngine';
+import { formatDateDisplay, formatINR } from '../engine/financeEngine';
 import CalendarDatePicker from '../components/CalendarDatePicker';
 
 export default function GoalsView({
@@ -31,19 +31,6 @@ export default function GoalsView({
 
   const [shortfallAlert, setShortfallAlert] = useState(null);
 
-  // AI Salary/Income Feasibility Modal
-  const [selectedGoalForAI, setSelectedGoalForAI] = useState(null);
-  const [aiResult, setAiResult] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
-
-  const handleOpenAI = async (goal) => {
-    setSelectedGoalForAI(goal);
-    setAiLoading(true);
-    const res = await analyzeGoalWithAI(goal, finState, data.profile);
-    setAiResult(res);
-    setAiLoading(false);
-  };
-
   const handleContributeAttempt = (goal) => {
     const amt = parseFloat(contribMap[goal.id]);
     if (!amt || amt <= 0) return;
@@ -67,7 +54,7 @@ export default function GoalsView({
       <div className="border-b hm-border pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
           <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted">
-            Savings Goals & AI Feasibility
+            Savings Goals
           </span>
           <h1 className="text-2xl font-extrabold tracking-tight mt-0.5">
             Savings Goals
@@ -211,16 +198,8 @@ export default function GoalsView({
                 </div>
               ) : (
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  <div
-                    onClick={() => handleOpenAI(g)}
-                    className="space-y-1.5 cursor-pointer flex-1"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <h3 className="text-lg font-extrabold">{g.name}</h3>
-                      <span className="px-2.5 py-0.5 rounded-full border hm-elevated hm-border text-[10px] font-bold flex items-center gap-1">
-                        <Sparkles size={10} /> AI Salary Report ↗
-                      </span>
-                    </div>
+                  <div className="space-y-1.5 flex-1">
+                    <h3 className="text-lg font-extrabold">{g.name}</h3>
                     <p className="text-xs hm-text-muted font-mono-num">
                       Saved: <strong>{formatINR(g.savedAmount, hideBalances)}</strong> /{' '}
                       <strong>{formatINR(g.targetAmount, hideBalances)}</strong> ({pct}%) • Due:{' '}
@@ -296,84 +275,6 @@ export default function GoalsView({
         </div>
       )}
 
-      {/* AI GOAL FEASIBILITY REPORT MODAL */}
-      {selectedGoalForAI && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-2xl border hm-surface hm-border p-6 space-y-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b hm-border pb-3">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-widest hm-text-muted block">
-                  Salary & Monthly Income Feasibility Analysis
-                </span>
-                <h3 className="text-lg font-extrabold">{selectedGoalForAI.name}</h3>
-              </div>
-              <button
-                onClick={() => {
-                  setSelectedGoalForAI(null);
-                  setAiResult(null);
-                }}
-                className="p-1 hm-text-muted cursor-pointer"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {aiLoading || !aiResult ? (
-              <div className="py-12 text-center text-xs hm-text-muted">
-                Analyzing against your monthly salary and available account balance...
-              </div>
-            ) : (
-              <div className="space-y-4 text-xs">
-                <div className="p-4 rounded-xl border hm-elevated hm-border flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] uppercase tracking-widest hm-text-muted block">
-                      Feasibility Verdict
-                    </span>
-                    <strong className="text-sm font-extrabold mt-0.5 block">
-                      {aiResult.isPossibleVerdict}
-                    </strong>
-                  </div>
-                  <span className="font-mono-num px-3 py-1 rounded-full hm-btn-primary font-extrabold">
-                    {aiResult.salarySharePct}% of Income
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2.5 text-center font-mono-num">
-                  <div className="p-3 rounded-xl border hm-elevated hm-border">
-                    <span className="text-[10px] hm-text-muted block font-sans">Required / Mo</span>
-                    <strong className="text-sm font-extrabold mt-0.5 block">
-                      {formatINR(aiResult.requiredMonthly)}
-                    </strong>
-                  </div>
-                  <div className="p-3 rounded-xl border hm-elevated hm-border">
-                    <span className="text-[10px] hm-text-muted block font-sans">Monthly Income</span>
-                    <strong className="text-sm font-extrabold mt-0.5 block">
-                      {formatINR(aiResult.effectiveMonthlyIncome)}
-                    </strong>
-                  </div>
-                  <div className="p-3 rounded-xl border hm-elevated hm-border">
-                    <span className="text-[10px] hm-text-muted block font-sans">Monthly Surplus</span>
-                    <strong className="text-sm font-extrabold mt-0.5 block">
-                      {formatINR(aiResult.monthlySurplus)}
-                    </strong>
-                  </div>
-                </div>
-
-                <p className="leading-relaxed hm-text-muted">{aiResult.summary}</p>
-
-                <div className="space-y-2 pt-2 border-t hm-border">
-                  {aiResult.recommendations.map((rec, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <CheckCircle2 size={14} className="text-emerald-500 shrink-0 mt-0.5" />
-                      <span>{rec}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -47,8 +47,14 @@ work.
 
 New users start with Cash Wallet and the standard transaction categories;
 banks, cards, investments, automatic payments, and goals are added by the
-user. On existing signed-in data, the built-in sample records are removed
-automatically while transactions and user-created records are retained.
+user. New accounts can be created with an opening balance (zero by default).
+Users can choose a primary account from Accounts & Cards; new
+transactions use it by default when its type is valid for that transaction.
+Cash Wallet stays last in the payment-source choices. The Magic Bar parses
+locally against the user's accounts and categories. Category charts and
+summaries are calculated locally from transaction data. On existing signed-in
+data, the built-in sample records are removed automatically while transactions
+and user-created records are retained.
 Credit-card limits, alert percentages, due dates, and payment bank are set per
 card. The emergency reserve is excluded from spendable balances and counted
 once in net worth; withdrawals are made from Wealth to a selected bank.
@@ -58,19 +64,12 @@ once in net worth; withdrawals are made from Wealth to a selected bank.
 1. Copy `.env.example` to `.env`.
 2. Set `EMAIL_WEBHOOK_URL` to the existing HTTPS email webhook; it is required
    for app-specific email alerts and security codes.
-3. Generate a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey)
-   and set `GEMINI_API_KEY=your-key` in `.env` to enable transaction suggestions
-   and optional financial insights. Restart Vite after changing the key. Keep it
-   server-side; do not use a `VITE_` prefix or commit the secret.
-4. Set the Firebase values above, then run `npm install` and `npm run dev`.
+3. Set the Firebase values above, then run `npm install` and `npm run dev`.
 
 The Firebase web configuration is public client configuration; access control
-is enforced by verified Firebase ID tokens and Firestore rules. The
-Gemini key and email webhook URL are server-side only. Transaction text plus
-category/account labels are sent to Gemini for interpretation; account
-balances are not included. The optional financial-insights action sends only
-monthly income, expense, and category totals after the user requests analysis;
-it does not send transaction descriptions, account names, or IDs.
+is enforced by verified Firebase ID tokens and Firestore rules. The email
+webhook URL is server-side only. Transaction parsing and category analytics
+run locally; the app does not send financial data to an AI service.
 
 ## Deployment
 
@@ -81,13 +80,11 @@ Set these values in the hosting provider's environment configuration:
 - `VITE_FIREBASE_PROJECT_ID`
 - `VITE_FIREBASE_APP_ID`
 - `FIREBASE_PROJECT_ID`
-- `GEMINI_API_KEY` (optional)
 - `EMAIL_WEBHOOK_URL` (required for app-specific email alerts and security codes)
 
 Vercel uses the functions under `api/`. Netlify uses the functions under
 `netlify/functions/` and the rewrites in `netlify.toml`. Other static hosts
-need equivalent serverless endpoints for `/api/webhook` and
-`/api/parse-transaction` and `/api/financial-advice`.
+need an equivalent serverless endpoint for `/api/webhook`.
 
 The webhook now accepts authenticated email delivery only; legacy global
 database pull/push actions are disabled. The former Apps Script background

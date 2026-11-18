@@ -26,7 +26,7 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Never cache live Google Apps Script Webhook or Gemini AI requests
+  // Never cache live API and webhook requests
   if (
     request.method !== 'GET' ||
     url.hostname.includes('script.google.com') ||

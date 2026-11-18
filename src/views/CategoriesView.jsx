@@ -1,17 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import { ArrowDownRight, ArrowLeftRight, ArrowUpRight, LoaderCircle, Sparkles } from 'lucide-react';
-import { auth } from '../firebase';
+import React, { useMemo } from 'react';
+import { ArrowDownRight, ArrowLeftRight, ArrowUpRight } from 'lucide-react';
 import { formatINR } from '../engine/financeEngine';
 
 const EMPTY_TRANSACTIONS = [];
-
-function getRecentMonthKeys(selectedMonth) {
-  const [year, month] = selectedMonth.split('-').map(Number);
-  return Array.from({ length: 6 }, (_, index) => {
-    const date = new Date(year, month - 6 + index, 1);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-  });
-}
 
 function sumTransactions(transactions, type) {
   return transactions
@@ -57,40 +48,53 @@ function summarizeCategories(transactions, type, categories) {
     .sort((a, b) => b.total - a.total);
 }
 
-function buildAdvisorSummary(transactions, categories, selectedMonth) {
-  const knownCategories = new Map(categories.map(category => [category.id, category]));
-  const months = getRecentMonthKeys(selectedMonth).map(month => {
-    const monthTransactions = transactions.filter(
-      transaction => transaction.date?.slice(0, 7) === month,
-    );
-    const categoryTotals = (type) => {
-      const totals = new Map();
-      monthTransactions
-        .filter(transaction => transaction.type === type)
-        .forEach(transaction => {
-          const label = knownCategories.get(transaction.categoryId)?.name || 'Uncategorized';
-          totals.set(label, (totals.get(label) || 0) + (Number(transaction.amount) || 0));
-        });
-      return [...totals.entries()]
-        .map(([category, amount]) => ({ category, amount: Number(amount.toFixed(2)) }))
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 20);
-    };
+function DonutChart({ title, groups, total, hideBalances }) {
+  const radius = 44;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
 
-    return {
-      month,
-      income: Number(sumTransactions(monthTransactions, 'income').toFixed(2)),
-      expenses: Number(sumTransactions(monthTransactions, 'expense').toFixed(2)),
-      incomeByCategory: categoryTotals('income'),
-      expensesByCategory: categoryTotals('expense'),
-    };
-  });
-
-  return { selectedMonth, months };
+  return (
+    <div className="relative h-36 w-36 shrink-0" role="img" aria-label={`${title} category breakdown`}>
+      <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+        <circle
+          cx="50"
+          cy="50"
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="12"
+          className="hm-text-muted opacity-15"
+        />
+        {total > 0 && groups.map((group) => {
+          const length = (group.total / total) * circumference;
+          const segment = (
+            <circle
+              key={group.id}
+              cx="50"
+              cy="50"
+              r={radius}
+              fill="none"
+              stroke={group.color}
+              strokeWidth="12"
+              strokeDasharray={`${length} ${circumference - length}`}
+              strokeDashoffset={-offset}
+            />
+          );
+          offset += length;
+          return segment;
+        })}
+      </svg>
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-3 text-center">
+        <span className="text-[9px] font-bold uppercase tracking-wider hm-text-muted">Total</span>
+        <strong className="max-w-full truncate font-mono-num text-xs font-extrabold">
+          {formatINR(total, hideBalances)}
+        </strong>
+      </div>
+    </div>
+  );
 }
 
 function BreakdownSection({ title, icon, color, groups, total, hideBalances }) {
-  const peak = Math.max(1, ...groups.map(group => group.total));
   const Icon = icon;
 
   return (
@@ -108,54 +112,60 @@ function BreakdownSection({ title, icon, color, groups, total, hideBalances }) {
         </span>
       </div>
 
-      {groups.length === 0 ? (
-        <p className="py-5 text-xs hm-text-muted">No {title.toLowerCase()} recorded for this month.</p>
-      ) : (
-        <div className="space-y-4">
-          {groups.map(group => (
-            <details key={group.id} className="group">
-              <summary className="list-none cursor-pointer">
-                <div className="flex items-center justify-between gap-3 text-xs">
-                  <span className="flex min-w-0 items-center gap-2 font-bold">
-                    <span
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm"
-                      style={{ backgroundColor: `${group.color}25`, color: group.color }}
-                    >
-                      {group.icon}
-                    </span>
-                    <span className="truncate">{group.name}</span>
-                  </span>
-                  <span className="font-mono-num font-bold">
-                    {formatINR(group.total, hideBalances)}
-                  </span>
-                </div>
-                <div className="ml-9 mt-2 h-1.5 overflow-hidden rounded-full hm-elevated">
-                  <div
-                    className="h-full rounded-full"
-                    style={{ width: `${Math.min(100, (group.total / peak) * 100)}%`, backgroundColor: group.color }}
-                  />
-                </div>
-              </summary>
-              <div className="ml-9 mt-2 space-y-1 border-l hm-border pl-3">
-                {group.subcategories.map(subcategory => (
-                  <div key={subcategory.name} className="flex items-center justify-between gap-3 py-1 text-[11px] hm-text-muted">
-                    <span className="truncate">{subcategory.name}</span>
-                    <span className="font-mono-num">{formatINR(subcategory.amount, hideBalances)}</span>
+      <div className="grid grid-cols-1 items-center gap-5 sm:grid-cols-[9rem_minmax(0,1fr)]">
+        <DonutChart title={title} groups={groups} total={total} hideBalances={hideBalances} />
+        {groups.length === 0 ? (
+          <p className="py-5 text-xs hm-text-muted">No {title.toLowerCase()} recorded for this month.</p>
+        ) : (
+          <div className="space-y-4">
+            {groups.map(group => {
+              const sharePct = total > 0 ? (group.total / total) * 100 : 0;
+              return (
+                <details key={group.id} className="group">
+                  <summary className="list-none cursor-pointer">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="flex min-w-0 items-center gap-2 font-bold">
+                        <span
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm"
+                          style={{ backgroundColor: `${group.color}25`, color: group.color }}
+                        >
+                          {group.icon}
+                        </span>
+                        <span className="truncate">{group.name}</span>
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <span className="block font-mono-num font-bold">
+                          {formatINR(group.total, hideBalances)}
+                        </span>
+                        <span className="text-[10px] hm-text-muted">{sharePct.toFixed(1)}%</span>
+                      </span>
+                    </div>
+                    <div className="ml-9 mt-2 h-1.5 overflow-hidden rounded-full hm-elevated">
+                      <div
+                        className="h-full rounded-full"
+                        style={{ width: `${Math.min(100, sharePct)}%`, backgroundColor: group.color }}
+                      />
+                    </div>
+                  </summary>
+                  <div className="ml-9 mt-2 space-y-1 border-l hm-border pl-3">
+                    {group.subcategories.map(subcategory => (
+                      <div key={subcategory.name} className="flex items-center justify-between gap-3 py-1 text-[11px] hm-text-muted">
+                        <span className="truncate">{subcategory.name}</span>
+                        <span className="font-mono-num">{formatINR(subcategory.amount, hideBalances)}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </details>
-          ))}
-        </div>
-      )}
+                </details>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
 
 export default function CategoriesView({ data, selectedMonth, hideBalances }) {
-  const [advisorBusy, setAdvisorBusy] = useState(false);
-  const [advisorError, setAdvisorError] = useState('');
-  const [advisorResult, setAdvisorResult] = useState(null);
   const transactions = data.transactions || EMPTY_TRANSACTIONS;
   const monthTransactions = useMemo(
     () => transactions.filter(transaction => transaction.date?.slice(0, 7) === selectedMonth),
@@ -183,39 +193,6 @@ export default function CategoriesView({ data, selectedMonth, hideBalances }) {
   const savingsTotal = otherActivity
     .filter(transaction => ['goal_contrib', 'investment_contrib'].includes(transaction.type))
     .reduce((sum, transaction) => sum + (Number(transaction.amount) || 0), 0);
-
-  const handleAdvisorRequest = async () => {
-    setAdvisorBusy(true);
-    setAdvisorError('');
-    setAdvisorResult(null);
-    try {
-      const idToken = await auth?.currentUser?.getIdToken();
-      if (!idToken) throw new Error('Sign in again before requesting an analysis.');
-      const response = await fetch('/api/financial-advice', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify(buildAdvisorSummary(transactions, data.categories || [], selectedMonth)),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        if (response.status === 503 && /not configured/i.test(result.error || '')) {
-          throw new Error('Gemini is not configured on the server. Add GEMINI_API_KEY to enable AI analysis.');
-        }
-        if (response.status === 503) {
-          throw new Error('Gemini is temporarily busy. Your category summaries are still available; please try insights again shortly.');
-        }
-        throw new Error(result.error || 'Financial analysis failed.');
-      }
-      setAdvisorResult(result);
-    } catch (error) {
-      setAdvisorError(error.message || 'Financial analysis failed. Please try again.');
-    } finally {
-      setAdvisorBusy(false);
-    }
-  };
 
   const monthLabel = new Date(`${selectedMonth}-01T12:00:00`).toLocaleDateString('en-IN', {
     month: 'long',
@@ -292,52 +269,6 @@ export default function CategoriesView({ data, selectedMonth, hideBalances }) {
         )}
       </section>
 
-      <section className="space-y-4 rounded-2xl border hm-surface hm-border p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wider">
-              <Sparkles size={16} /> AI financial insights
-            </h2>
-            <p className="mt-1 max-w-2xl text-[11px] hm-text-muted">
-              Gemini receives only six months of category totals and cash-flow totals when you request an analysis—not transaction descriptions, account names, or IDs.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleAdvisorRequest}
-            disabled={advisorBusy}
-            className="flex shrink-0 items-center justify-center gap-2 rounded-xl hm-btn-primary px-4 py-2.5 text-xs font-bold cursor-pointer disabled:cursor-wait disabled:opacity-60"
-          >
-            {advisorBusy ? <LoaderCircle size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            {advisorBusy ? 'Analyzing…' : 'Analyze my finances'}
-          </button>
-        </div>
-        {advisorError && <p role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">{advisorError}</p>}
-        {advisorResult && (
-          <div className="space-y-3 border-t hm-border pt-4 text-xs">
-            <p className="font-semibold">{advisorResult.summary}</p>
-            {advisorResult.observations?.length > 0 && (
-              <div>
-                <h3 className="mb-1 font-bold">Observations</h3>
-                <ul className="list-inside list-disc space-y-1 hm-text-muted">
-                  {advisorResult.observations.map((item, index) => <li key={`observation-${index}`}>{item}</li>)}
-                </ul>
-              </div>
-            )}
-            {advisorResult.actions?.length > 0 && (
-              <div>
-                <h3 className="mb-1 font-bold">Practical next steps</h3>
-                <ul className="list-inside list-disc space-y-1 hm-text-muted">
-                  {advisorResult.actions.map((item, index) => <li key={`action-${index}`}>{item}</li>)}
-                </ul>
-              </div>
-            )}
-            <p className="border-t hm-border pt-3 text-[10px] hm-text-muted">
-              AI-generated educational guidance, not regulated financial, tax, or investment advice. Verify the figures and use your judgment.
-            </p>
-          </div>
-        )}
-      </section>
     </div>
   );
 }
