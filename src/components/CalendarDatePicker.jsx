@@ -339,6 +339,7 @@ export default function CalendarDatePicker({
             </>
           ) : (
             <>
+              {/* Issue 5: Month/Year quick-select for date mode */}
               <div className="mb-2 flex items-center justify-between">
                 <button
                   type="button"
@@ -348,9 +349,29 @@ export default function CalendarDatePicker({
                 >
                   <ChevronLeft size={16} />
                 </button>
-                <strong className="text-sm">
-                  {visibleMonth.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
-                </strong>
+                <div className="flex items-center gap-1">
+                  <select
+                    value={visibleMonth.getMonth()}
+                    onChange={(e) => setVisibleMonth(month => new Date(month.getFullYear(), Number(e.target.value), 1))}
+                    className="bg-transparent font-bold text-sm cursor-pointer outline-none appearance-none text-center"
+                    style={{ WebkitAppearance: 'none' }}
+                  >
+                    {monthNames.map((name, i) => (
+                      <option key={name} value={i} className="bg-[#1a1a1a] text-[#E1DCC9]">{name}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={visibleMonth.getFullYear()}
+                    onChange={(e) => setVisibleMonth(month => new Date(Number(e.target.value), month.getMonth(), 1))}
+                    className="bg-transparent font-bold text-sm cursor-pointer outline-none appearance-none text-center"
+                    style={{ WebkitAppearance: 'none' }}
+                  >
+                    {Array.from({ length: 21 }, (_, i) => {
+                      const y = new Date().getFullYear() - 10 + i;
+                      return <option key={y} value={y} className="bg-[#1a1a1a] text-[#E1DCC9]">{y}</option>;
+                    })}
+                  </select>
+                </div>
                 <button
                   type="button"
                   onClick={() => setVisibleMonth(month => new Date(month.getFullYear(), month.getMonth() + 1, 1))}

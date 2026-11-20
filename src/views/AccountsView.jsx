@@ -8,6 +8,7 @@ import { formatDateDisplay, formatINR } from '../engine/financeEngine';
 import { BrandLogo } from '../components/Sidebar';
 import CalendarDatePicker from '../components/CalendarDatePicker';
 
+// Issue 3 & 4: Global click-away to close all menus, and smart positioning
 function AccountActionsMenu({
   account,
   isPrimary,
@@ -18,15 +19,59 @@ function AccountActionsMenu({
   onDelete,
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const menuRef = React.useRef(null);
+  const buttonRef = React.useRef(null);
+  const [menuStyle, setMenuStyle] = React.useState({});
 
   const runAction = (action) => {
     setIsOpen(false);
     action();
   };
 
+  // Close on outside click (Issue 3)
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e) => {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target) &&
+        buttonRef.current && !buttonRef.current.contains(e.target)
+      ) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  // Smart positioning to keep menu on screen (Issue 4)
+  React.useEffect(() => {
+    if (!isOpen || !menuRef.current || !buttonRef.current) return;
+    const updatePosition = () => {
+      const btn = buttonRef.current.getBoundingClientRect();
+      const menu = menuRef.current;
+      const menuRect = menu.getBoundingClientRect();
+      const style = {};
+
+      // Check if menu goes off bottom
+      if (btn.bottom + menuRect.height + 8 > window.innerHeight) {
+        style.bottom = '100%';
+        style.top = 'auto';
+        style.marginBottom = '4px';
+      }
+      // Check if menu goes off right
+      if (btn.right - menuRect.width < 0) {
+        style.left = '0';
+        style.right = 'auto';
+      }
+      setMenuStyle(style);
+    };
+    requestAnimationFrame(updatePosition);
+  }, [isOpen]);
+
   return (
     <div className="relative">
       <button
+        ref={buttonRef}
         type="button"
         title={`${account.name} settings`}
         aria-label={`${account.name} settings`}
@@ -38,8 +83,10 @@ function AccountActionsMenu({
       </button>
       {isOpen && (
         <div
+          ref={menuRef}
           role="menu"
           className="absolute right-0 top-full z-20 mt-1 min-w-44 rounded-xl border hm-surface hm-border p-1.5 shadow-xl"
+          style={menuStyle}
         >
           <button
             type="button"

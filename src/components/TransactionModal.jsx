@@ -345,7 +345,7 @@ export default function TransactionModal({
             </div>
             <button
               type="submit"
-              className="h-8 w-full min-w-0 whitespace-nowrap rounded-lg hm-btn-primary px-2 text-[10px] font-extrabold sm:hidden"
+              className="h-8 w-full min-w-0 whitespace-nowrap rounded-lg hm-btn-primary px-2 text-[14px] font-extrabold sm:hidden"
               aria-label={`Save ${type}`}
             >
               {editingTx ? 'Save changes' : `Save ${type}`}
@@ -600,7 +600,7 @@ export default function TransactionModal({
                   type="submit"
                   aria-label={`Save ${type}`}
                   title={`Save ${type}`}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg hm-btn-primary cursor-pointer sm:hidden"
+                  className="flex h-0 w-9 shrink-0 items-center justify-center rounded-lg hm-btn-primary cursor-pointer sm:hidden"
                 >
                   <Check size={17} />
                 </button>

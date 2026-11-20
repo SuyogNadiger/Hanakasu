@@ -136,7 +136,6 @@ export default function App({ user, onSignOut }) {
     }
     return "checking";
   });
-  const [legacyImportError, setLegacyImportError] = useState("");
   const [data, setData] = useState(() => {
     const saved = localStorage.getItem(storageKey);
     if (saved) {
@@ -839,13 +838,27 @@ export default function App({ user, onSignOut }) {
       rule.frequency,
     );
 
+    // Issue 7: Validate and resolve the account to deduct from
+    const fallbackAccountId = data.accounts.find(
+      (account) => account.type !== "credit",
+    )?.id;
+    const validAccId = data.accounts.some(
+      (account) => account.id === rule.accountId && account.type !== "credit",
+    )
+      ? rule.accountId
+      : fallbackAccountId;
+    if (!validAccId) {
+      alert("No valid bank account found to deduct from. Please add a bank account first.");
+      return;
+    }
+
     const newTx = {
       id: "tx_auto_" + Date.now(),
       type: isSip ? "investment_contrib" : "expense",
       amount: rule.amount,
       date: getTodayISO(),
       time: "09:00 am",
-      accountId: rule.accountId,
+      accountId: validAccId,
       categoryId: isSip ? "investment" : "cat_bills",
       subcategory: rule.category,
       paymentMethod: "Auto-Debit",
@@ -870,8 +883,9 @@ export default function App({ user, onSignOut }) {
       ),
     }));
 
+    const deductedFromName = data.accounts.find(a => a.id === validAccId)?.name || "Account";
     dispatchAlert(
-      `Standing Instruction Executed: ${formatINR(rule.amount)} deducted for ${rule.title} (${rule.frequency}). Next scheduled deduction: ${formatDateDisplay(nextDateISO)}.`,
+      `Standing Instruction Executed: ${formatINR(rule.amount)} deducted from ${deductedFromName} for ${rule.title} (${rule.frequency}). Next scheduled deduction: ${formatDateDisplay(nextDateISO)}.`,
       "AUTOPAY EXECUTION",
     );
   };
@@ -898,53 +912,33 @@ export default function App({ user, onSignOut }) {
       ),
     }));
 
-  const handleImportLegacyData = () => {
-    setLegacyImportError("");
-    const claimedBy = localStorage.getItem(LEGACY_OWNER_UID_KEY);
-    if (claimedBy && claimedBy !== user.uid) {
-      setLegacyImportStatus("claimed");
-      return;
-    }
+  // Legacy import/start-fresh handlers removed — auto-import handles it now
 
-    const legacyJson = localStorage.getItem(STORAGE_KEY);
-    if (!legacyJson) {
-      setLegacyImportStatus("hidden");
-      return;
-    }
-    if (
-      !window.confirm(
-        "Import this device's old finance data into your signed-in account? This replaces that account's current data. Only continue if you own the old data, and export a backup first.",
-      )
-    ) {
-      return;
-    }
-
-    try {
-      const importedData = normalizeAppData(JSON.parse(legacyJson), user);
-      localStorage.setItem(LEGACY_OWNER_UID_KEY, user.uid);
-      updateLocalData(importedData);
-      setLegacyImportStatus("hidden");
-    } catch (error) {
-      setLegacyImportError(
-        `Legacy data could not be imported: ${error.message}`,
-      );
-    }
-  };
-
-  const handleStartFresh = () => {
-    setLegacyImportError("");
-    try {
-      if (legacyImportStatus === "available") {
-        localStorage.setItem(LEGACY_OWNER_UID_KEY, user.uid);
+  // Issue 1: Auto-import legacy data instead of showing the prompt
+  useEffect(() => {
+    if (legacyImportStatus === "available") {
+      // Automatically import old data without asking
+      const legacyJson = localStorage.getItem(STORAGE_KEY);
+      if (legacyJson) {
+        try {
+          const importedData = normalizeAppData(JSON.parse(legacyJson), user);
+          localStorage.setItem(LEGACY_OWNER_UID_KEY, user.uid);
+          updateLocalData(importedData);
+        } catch {
+          // If import fails, just continue with fresh data
+        }
       }
-    } catch (error) {
-      setLegacyImportError(
-        `This browser could not save the import choice: ${error.message}`,
-      );
-      return;
+      setLegacyImportStatus("hidden");
+    } else if (legacyImportStatus === "claimed") {
+      // For claimed status, just start fresh silently
+      try {
+        localStorage.setItem(LEGACY_OWNER_UID_KEY, user.uid);
+      } catch {
+        // Ignore storage errors
+      }
+      setLegacyImportStatus("hidden");
     }
-    setLegacyImportStatus("hidden");
-  };
+  }, [legacyImportStatus, user, updateLocalData]);
 
   const handleManualSync = () => {
     void saveSnapshot(dataRef.current, true);
@@ -992,46 +986,6 @@ export default function App({ user, onSignOut }) {
         <p className="text-sm font-semibold hm-text-muted">
           Checking this device for old data…
         </p>
-      </div>
-    );
-  }
-
-  if (legacyImportStatus === "available" || legacyImportStatus === "claimed") {
-    return (
-      <div className={`min-h-screen flex items-center justify-center p-4 ${theme === "dark" ? "theme-dark" : "theme-light"}`}>
-        <section className="hm-surface hm-border w-full max-w-lg space-y-4 rounded-2xl border p-6">
-          <h1 className="text-lg font-extrabold">
-            {legacyImportStatus === "available"
-              ? "Old device data found"
-              : "Start your private account"}
-          </h1>
-          <p className="text-sm hm-text-muted">
-            {legacyImportStatus === "available"
-              ? "Old data is not shared with your new account automatically. Import only if it belongs to you; otherwise continue without importing."
-              : "Legacy device data was already assigned to another account in this browser. You can restore a personal backup after continuing."}
-          </p>
-          {legacyImportError && (
-            <p className="text-sm font-semibold text-rose-500">
-              {legacyImportError}
-            </p>
-          )}
-          {legacyImportStatus === "available" && (
-            <button
-              type="button"
-              onClick={handleImportLegacyData}
-              className="hm-btn-primary w-full rounded-xl py-2.5 text-sm font-bold"
-            >
-              Import old data into this account
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleStartFresh}
-            className="w-full rounded-xl border hm-border py-2.5 text-sm font-bold"
-          >
-            Continue without importing
-          </button>
-        </section>
       </div>
     );
   }
@@ -1331,6 +1285,7 @@ export default function App({ user, onSignOut }) {
               data={data}
               finState={finState}
               hideBalances={data.settings.hideBalances}
+              onDispatchAlert={dispatchAlert}
               onAddGoal={(g) =>
                 updateLocalData((prev) => ({
                   ...prev,

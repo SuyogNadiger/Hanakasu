@@ -154,6 +154,12 @@ export default function Sidebar({
   const mobilePrimaryItems = NAV_ITEMS.filter(item => MOBILE_PRIMARY_IDS.has(item.id));
   const mobileMoreItems = NAV_ITEMS.filter(item => !MOBILE_PRIMARY_IDS.has(item.id));
 
+  // Issue 3: Close "More" menu when navigating to any primary tab
+  const handlePrimaryTabClick = (tabId) => {
+    setMoreOpen(false);
+    setActiveTab(tabId);
+  };
+
   return (
     <>
       <aside className="hidden lg:flex flex-col justify-between w-60 h-screen sticky top-0 shrink-0 border-r hm-surface hm-border px-5 py-7 select-none overflow-y-auto">
@@ -165,11 +171,11 @@ export default function Sidebar({
             title="Go to Home Page"
             className="flex items-center gap-3 text-left w-full group cursor-pointer"
           >
-            <div className="w-9 h-9 rounded-xl hm-btn-primary font-black text-sm flex items-center justify-center tracking-tighter group-hover:scale-105 transition">
-              HM
+            <div className="w-11 h-11 flex items-center justify-center tracking-tighter group-hover:scale-105 transition">
+              <img src="/hm-icon.svg" alt="Logo" className="w-11 h-11 bg-none" />
             </div>
             <div>
-              <span className="text-2xl font-extrabold tracking-tight block leading-none uppercase group-hover:underline">
+              <span className="text-2xl font-black tracking-tight block leading-none uppercase group-hover:font-extrabold group-hover:hm-text-primary transition-colors">
                 ಹಣಕಾಸು ಮಂತ್ರಿ 
               </span>
               <span className="text-[10px] tracking-widest uppercase hm-text-muted mt-1 block">
@@ -266,7 +272,7 @@ export default function Sidebar({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => handlePrimaryTabClick(item.id)}
                 className={`relative flex min-w-0 flex-col items-center justify-center py-1 rounded-lg transition cursor-pointer ${
                   active ? 'font-extrabold' : 'hm-text-muted'
                 }`}

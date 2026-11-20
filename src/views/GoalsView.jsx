@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
-  Plus, Trash2, Pencil, AlertTriangle
+  Plus, Trash2, Pencil, AlertTriangle, Settings, ChevronDown, ChevronUp,
+  TrendingUp, Bell
 } from 'lucide-react';
-import { formatDateDisplay, formatINR } from '../engine/financeEngine';
+import { formatDateDisplay, formatINR, parseLocalDateISO } from '../engine/financeEngine';
 import CalendarDatePicker from '../components/CalendarDatePicker';
 
 export default function GoalsView({
@@ -12,7 +13,8 @@ export default function GoalsView({
   onAddGoal,
   onUpdateGoal,
   onContributeGoal,
-  onDeleteGoal
+  onDeleteGoal,
+  onDispatchAlert
 }) {
   const [name, setName] = useState('');
   const [targetAmount, setTargetAmount] = useState('');
@@ -31,6 +33,21 @@ export default function GoalsView({
 
   const [shortfallAlert, setShortfallAlert] = useState(null);
 
+  // Issue 6: Gear menu state per goal
+  const [gearOpenId, setGearOpenId] = useState(null);
+
+  // Issue 6: Reminder modal state
+  const [reminderGoalId, setReminderGoalId] = useState(null);
+  const [reminderDate, setReminderDate] = useState('');
+  const [reminderAmount, setReminderAmount] = useState('');
+
+  // Issue 6: Analysis modal state
+  const [analysisGoalId, setAnalysisGoalId] = useState(null);
+
+  // Issue 6: Mobile collapsible create form
+  const hasGoals = data.goals.length > 0;
+  const [createFormOpen, setCreateFormOpen] = useState(!hasGoals);
+
   const handleContributeAttempt = (goal) => {
     const amt = parseFloat(contribMap[goal.id]);
     if (!amt || amt <= 0) return;
@@ -47,6 +64,29 @@ export default function GoalsView({
 
     onContributeGoal(goal.id, amt, contributionAccount.id);
     setContribMap({ ...contribMap, [goal.id]: '' });
+  };
+
+  // Issue 6: Analyse monthly contribution needed
+  const analyseGoal = (goal) => {
+    const remaining = Math.max(0, goal.targetAmount - goal.savedAmount);
+    if (remaining <= 0) return { monthsLeft: 0, monthlyContribution: 0, message: 'Goal already achieved! 🎉' };
+
+    const targetDateParsed = parseLocalDateISO(goal.targetDate);
+    if (!targetDateParsed) return { monthsLeft: 0, monthlyContribution: 0, message: 'No target date set. Set a target date to get monthly contribution analysis.' };
+
+    const now = new Date();
+    const monthsLeft = Math.max(1,
+      (targetDateParsed.getFullYear() - now.getFullYear()) * 12 +
+      (targetDateParsed.getMonth() - now.getMonth())
+    );
+    const monthlyContribution = Math.ceil(remaining / monthsLeft);
+
+    return {
+      monthsLeft,
+      monthlyContribution,
+      remaining,
+      message: `You need to contribute ${formatINR(monthlyContribution)} per month for ${monthsLeft} month${monthsLeft > 1 ? 's' : ''} to reach your goal of ${formatINR(goal.targetAmount)} by ${formatDateDisplay(goal.targetDate)}.`
+    };
   };
 
   return (
@@ -82,53 +122,68 @@ export default function GoalsView({
         </div>
       </div>
 
-      {/* Create Goal Form */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!name.trim() || !targetAmount) return;
-          onAddGoal({
-            id: 'goal_' + Date.now(),
-            name: name.trim(),
-            targetAmount: Number(targetAmount),
-            savedAmount: 0,
-            targetDate
-          });
-          setName('');
-          setTargetAmount('');
-          setTargetDate('');
-        }}
-        className="p-4 rounded-2xl border hm-surface hm-border grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs"
-      >
-        <input
-          type="text"
-          required
-          placeholder="Goal Title (e.g. Emergency Reserve)"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="hm-input rounded-xl px-3.5 py-2.5 outline-none"
-        />
-        <input
-          type="number"
-          required
-          placeholder="Target Amount (₹)"
-          value={targetAmount}
-          onChange={(e) => setTargetAmount(e.target.value)}
-          className="hm-input font-mono-num rounded-xl px-3.5 py-2.5 outline-none"
-        />
-        <CalendarDatePicker
-          value={targetDate}
-          onChange={setTargetDate}
-          ariaLabel="Goal target date"
-          className="w-full"
-        />
-        <button
-          type="submit"
-          className="rounded-xl hm-btn-primary font-extrabold uppercase tracking-wider py-2.5 flex items-center justify-center gap-1.5 cursor-pointer"
-        >
-          <Plus size={14} /> Create Goal
-        </button>
-      </form>
+      {/* Issue 6: Collapsible Create Goal Form on mobile */}
+      <div>
+        {hasGoals && (
+          <button
+            type="button"
+            onClick={() => setCreateFormOpen(!createFormOpen)}
+            className="lg:hidden flex items-center gap-2 text-xs font-bold hm-text-muted mb-3 cursor-pointer"
+          >
+            {createFormOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {createFormOpen ? 'Hide Create Goal' : 'Create New Goal'}
+          </button>
+        )}
+        <div className={`${hasGoals && !createFormOpen ? 'hidden lg:block' : ''}`}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!name.trim() || !targetAmount) return;
+              onAddGoal({
+                id: 'goal_' + Date.now(),
+                name: name.trim(),
+                targetAmount: Number(targetAmount),
+                savedAmount: 0,
+                targetDate
+              });
+              setName('');
+              setTargetAmount('');
+              setTargetDate('');
+              if (hasGoals) setCreateFormOpen(false);
+            }}
+            className="p-4 rounded-2xl border hm-surface hm-border grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs"
+          >
+            <input
+              type="text"
+              required
+              placeholder="Goal Title (e.g. Emergency Reserve)"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="hm-input rounded-xl px-3.5 py-2.5 outline-none"
+            />
+            <input
+              type="number"
+              required
+              placeholder="Target Amount (₹)"
+              value={targetAmount}
+              onChange={(e) => setTargetAmount(e.target.value)}
+              className="hm-input font-mono-num rounded-xl px-3.5 py-2.5 outline-none"
+            />
+            <CalendarDatePicker
+              value={targetDate}
+              onChange={setTargetDate}
+              ariaLabel="Goal target date"
+              className="w-full"
+            />
+            <button
+              type="submit"
+              className="rounded-xl hm-btn-primary font-extrabold uppercase tracking-wider py-2.5 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Plus size={14} /> Create Goal
+            </button>
+          </form>
+        </div>
+      </div>
 
       {/* Goals List */}
       <div className="divide-y hm-border border-y">
@@ -210,7 +265,7 @@ export default function GoalsView({
                     </div>
                   </div>
 
-                  {/* Contribute from the selected account + Pencil Edit + Delete */}
+                  {/* Contribute + Gear Menu */}
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <input
                       type="number"
@@ -223,27 +278,74 @@ export default function GoalsView({
                       onClick={() => handleContributeAttempt(g)}
                       className="px-3.5 py-2 rounded-xl hm-btn-primary font-bold flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Plus size={14} /> + Contribute
+                      <Plus size={14} /> Contribute
                     </button>
 
-                    <button
-                      onClick={() => {
-                        setEditingGoalId(g.id);
-                        setEditDraft({ ...g });
-                      }}
-                      title="Edit Goal"
-                      className="p-2 rounded-xl border hm-elevated hm-border hm-text-muted hover:opacity-100 cursor-pointer"
-                    >
-                      <Pencil size={14} />
-                    </button>
-
-                    <button
-                      onClick={() => onDeleteGoal(g.id)}
-                      title="Delete Goal"
-                      className="p-2 hm-text-muted hover:text-rose-500 cursor-pointer"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {/* Issue 6: Gear icon with Edit, Delete, Set Reminder, Analyse */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setGearOpenId(gearOpenId === g.id ? null : g.id)}
+                        title="Goal options"
+                        className="p-2 rounded-xl border hm-elevated hm-border hm-text-muted hover:opacity-100 cursor-pointer"
+                      >
+                        <Settings size={14} />
+                      </button>
+                      {gearOpenId === g.id && (
+                        <div
+                          role="menu"
+                          className="absolute right-0 top-full z-20 mt-1 min-w-48 rounded-xl border hm-surface hm-border p-1.5 shadow-xl"
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setGearOpenId(null);
+                              setEditingGoalId(g.id);
+                              setEditDraft({ ...g });
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold hover:opacity-80 cursor-pointer"
+                          >
+                            <Pencil size={13} /> Edit Goal
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setGearOpenId(null);
+                              setReminderGoalId(g.id);
+                              setReminderDate('');
+                              setReminderAmount(String(g.targetAmount - g.savedAmount > 0 ? Math.ceil((g.targetAmount - g.savedAmount) / 12) : 0));
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold hover:opacity-80 cursor-pointer"
+                          >
+                            <Bell size={13} /> Set Reminder
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setGearOpenId(null);
+                              setAnalysisGoalId(g.id);
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold hover:opacity-80 cursor-pointer"
+                          >
+                            <TrendingUp size={13} /> Analyse
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setGearOpenId(null);
+                              onDeleteGoal(g.id);
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                          >
+                            <Trash2 size={13} /> Delete Goal
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -251,6 +353,127 @@ export default function GoalsView({
           );
         })}
       </div>
+
+      {/* Issue 6: Reminder Modal */}
+      {reminderGoalId && (() => {
+        const goal = data.goals.find(g => g.id === reminderGoalId);
+        if (!goal) return null;
+        return (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="w-full max-w-sm rounded-2xl border hm-surface hm-border p-6 space-y-4 shadow-2xl text-xs">
+              <h3 className="text-base font-extrabold flex items-center gap-2">
+                <Bell size={18} /> Set Contribution Reminder
+              </h3>
+              <p className="hm-text-muted">
+                Get an email reminder to contribute towards <strong>{goal.name}</strong>.
+              </p>
+              <div className="space-y-3">
+                <label className="text-[10px] font-bold uppercase hm-text-muted block">
+                  Reminder Date
+                  <CalendarDatePicker
+                    required
+                    value={reminderDate}
+                    onChange={setReminderDate}
+                    ariaLabel="Reminder date"
+                    className="mt-1 w-full"
+                  />
+                </label>
+                <label className="text-[10px] font-bold uppercase hm-text-muted block">
+                  Amount to Contribute (₹)
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={reminderAmount}
+                    onChange={(e) => setReminderAmount(e.target.value)}
+                    className="hm-input font-mono-num mt-1 w-full rounded-lg px-3 py-2 text-xs"
+                  />
+                </label>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!reminderDate || !reminderAmount) return;
+                    if (onDispatchAlert) {
+                      onDispatchAlert(
+                        `Goal Contribution Reminder: Please contribute ${formatINR(Number(reminderAmount))} towards "${goal.name}" (Target: ${formatINR(goal.targetAmount)}, Saved: ${formatINR(goal.savedAmount)}). Reminder date: ${formatDateDisplay(reminderDate)}.`,
+                        'GOAL CONTRIBUTION REMINDER'
+                      );
+                    }
+                    setReminderGoalId(null);
+                  }}
+                  disabled={!reminderDate || !reminderAmount}
+                  className="flex-1 py-2.5 rounded-xl hm-btn-primary font-extrabold uppercase tracking-wider cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Send Reminder Email
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReminderGoalId(null)}
+                  className="px-4 py-2.5 rounded-xl border hm-border font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Issue 6: Analysis Modal */}
+      {analysisGoalId && (() => {
+        const goal = data.goals.find(g => g.id === analysisGoalId);
+        if (!goal) return null;
+        const analysis = analyseGoal(goal);
+        return (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="w-full max-w-sm rounded-2xl border hm-surface hm-border p-6 space-y-4 shadow-2xl text-xs">
+              <h3 className="text-base font-extrabold flex items-center gap-2">
+                <TrendingUp size={18} /> Goal Analysis
+              </h3>
+              <div className="space-y-3">
+                <p className="font-bold text-sm">{goal.name}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl border hm-border p-3">
+                    <span className="text-[10px] hm-text-muted block">Target</span>
+                    <span className="font-mono-num font-extrabold">{formatINR(goal.targetAmount)}</span>
+                  </div>
+                  <div className="rounded-xl border hm-border p-3">
+                    <span className="text-[10px] hm-text-muted block">Saved</span>
+                    <span className="font-mono-num font-extrabold">{formatINR(goal.savedAmount)}</span>
+                  </div>
+                  <div className="rounded-xl border hm-border p-3">
+                    <span className="text-[10px] hm-text-muted block">Remaining</span>
+                    <span className="font-mono-num font-extrabold">{formatINR(Math.max(0, goal.targetAmount - goal.savedAmount))}</span>
+                  </div>
+                  {analysis.monthsLeft > 0 && (
+                    <div className="rounded-xl border hm-border p-3">
+                      <span className="text-[10px] hm-text-muted block">Months Left</span>
+                      <span className="font-mono-num font-extrabold">{analysis.monthsLeft}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl border hm-border p-4 bg-emerald-500/5">
+                  <p className="font-semibold leading-relaxed">{analysis.message}</p>
+                  {analysis.monthlyContribution > 0 && (
+                    <p className="mt-2 text-lg font-extrabold font-mono-num text-emerald-500">
+                      {formatINR(analysis.monthlyContribution)} / month
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAnalysisGoalId(null)}
+                className="w-full py-2.5 rounded-xl hm-btn-primary font-extrabold uppercase tracking-wider cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {shortfallAlert && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">

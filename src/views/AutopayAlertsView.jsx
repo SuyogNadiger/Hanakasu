@@ -180,7 +180,7 @@ export default function AutopayAlertsView({
             setTitle("");
             setAmount("");
           }}
-          className="p-4 rounded-2xl border hm-surface hm-border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 text-xs"
+          className="p-4 rounded-2xl border hm-surface hm-border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 text-xs overflow-hidden"
         >
           <input
             type="text"
@@ -254,7 +254,7 @@ export default function AutopayAlertsView({
         </form>
 
         {/* Point 2: Created Rules List with Full Pencil Edit for ALL Data */}
-        <div className="divide-y hm-border border-y text-xs">
+        <div className="divide-y hm-border border-y text-xs overflow-x-auto">
           {(data.autopayRules || []).map((rule) => {
             const isEditing = editingRuleId === rule.id;
             const bankName =
@@ -407,15 +407,15 @@ export default function AutopayAlertsView({
                     </div>
                   </div>
                 ) : (
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <span className="px-2 py-0.5 rounded border hm-elevated hm-border text-[10px] font-bold mr-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">
+                    <div className="min-w-0 flex-1">
+                      <span className="px-2 py-0.5 rounded border hm-elevated hm-border text-[10px] font-bold mr-2 inline-block whitespace-nowrap">
                         {rule.category} • {rule.frequency}
                       </span>
                       <strong className="text-sm font-extrabold">
                         {rule.title}
                       </strong>
-                      <span className="hm-text-muted ml-2">
+                      <span className="hm-text-muted ml-2 block sm:inline">
                         (Deduction Date:{" "}
                         <strong>
                           {rule.deductDate
@@ -426,7 +426,7 @@ export default function AutopayAlertsView({
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
                       <span className="font-mono-num font-extrabold text-sm">
                         {formatINR(rule.amount, hideBalances)}
                       </span>

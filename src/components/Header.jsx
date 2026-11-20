@@ -37,12 +37,12 @@ export default function Header({
             title="Go to Home Page"
             className="lg:hidden flex items-center gap-2 cursor-pointer group"
           >
-            <div className="w-8 h-8 rounded-lg hm-btn-primary font-black text-xs flex items-center justify-center group-hover:scale-105 transition">
-              HM
+            <div className="w-9 h-9 flex items-center justify-center tracking-tighter group-hover:scale-105 transition">
+              <img src="/hm-icon.svg" alt="Logo" className="w-11 h-11" />
             </div>
-            <span className="text-xs font-extrabold uppercase tracking-tight group-hover:underline">
-              Hanakasu Mantri
-            </span>
+            {/* <span className="text-xl font-extrabold uppercase tracking-tight group-hover:hm-text-primary transition-colors">
+              ಹಣಕಾಸು ಮಂತ್ರಿ
+            </span> */}
           </button>
 
           <div className="hidden sm:flex items-center gap-2 text-xs font-semibold">
